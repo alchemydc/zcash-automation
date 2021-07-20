@@ -189,6 +189,30 @@ systemctl start zcashd.service
 EOF
 chmod u+x /root/backup.sh
 
+# ----- Create snapshot script
+cat <<EOF > /root/backup_snapshot.sh
+#!/bin/bash
+# This script stops zcashd, deletes snapshots from GCS, and then snapshots the
+# disk containing the Zcash parameters, as well as the disk containing the Zcash blockchain
+# and supporting data.
+
+set -x
+echo "Deleting snapshots" | logger
+echo 'y' | gcloud compute snapshots delete ${data_disk_name}-snapshot-latest 
+echo 'y' | gcloud compute snapshots delete ${params_disk_name}-snapshot-latest
+echo "Taking snapshot of Zcash params disk" | logger
+gcloud compute disks snapshot ${params_disk_name} --snapshot-names=${params_disk_name}-snapshot-latest --zone=${gcloud_zone}
+echo "Stopping zcashd"
+systemctl stop zcashd
+sleep 5
+echo "Taking snapshot of Zcash data disk" | logger
+gcloud compute disks snapshot ${data_disk_name} --snapshot-names=${data_disk_name}-snapshot-latest --zone=${gcloud_zone}
+sleep 3
+echo "starting zcashd" | logger
+systemctl start zcashd.service
+EOF
+chmod u+x /root/backup_snapshot.sh
+
 # ---- Create rsync backup script
 echo "Creating rsync chaindata backup script" | logger
 cat <<'EOF' > /root/backup_rsync.sh
@@ -200,8 +224,10 @@ echo "Starting rsync chaindata backup" | logger
 echo "Stopping zcashd" | logger
 systemctl stop zcashd.service
 sleep 5
-echo "rsyncing .zcash to GCS" | logger
-gsutil -m rsync -d -r /home/zcash/.zcash gs://${gcloud_project}-chaindata-rsync
+echo "rsyncing blocks to GCS" | logger
+gsutil -m rsync -d -r /home/zcash/.zcash/blocks gs://${gcloud_project}-chaindata-rsync/
+echo "rsyncing chainstate to GCS" | logger
+gsutil -m rsync -d -r /home/zcash/.zcash/chainstate gs://${gcloud_project}-chaindata-rsync/
 echo "rsync chaindata backup completed" | logger
 sleep 3
 echo "starting zcashd" | logger
@@ -214,9 +240,14 @@ chmod u+x /root/backup_rsync.sh
 cat <<'EOF' > /root/backup.crontab
 # m h  dom mon dow   command
 # backup full tarball once a week at 00:57 on Sunday
-57 0 * * 0 /root/backup.sh | logger
+#57 0 * * 0 /root/backup.sh | logger
+
 # backup via rsync once a day at 00:17 past the hour
-17 0 * * * /root/backup_rsync.sh | logger
+#17 0 * * * /root/backup_rsync.sh | logger
+
+# backup via snapshot once a day at 04:20 past the hour
+# note that snapshot backup is the only method enabled by default, because it's by far the fastest.
+20 04 * * * /root/backup_snapshot.sh | logger
 EOF
 /usr/bin/crontab /root/backup.crontab
 
@@ -273,7 +304,7 @@ then
   systemctl stop zcashd.service
   echo "downloading chaindata via rsync from gs://${gcloud_project}-chaindata-rsync" | logger
   mkdir -p /home/zcash/.zcash
-  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync /home/zcash/.zcash
+  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync /home/zcash/.zcash/
   echo "Setting perms on chaindata" | logger
   chown -R zcash:zcash /home/zcash/.zcash
   echo "starting zcashd" | logger

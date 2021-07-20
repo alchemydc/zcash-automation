@@ -78,6 +78,8 @@ resource "google_compute_instance" "fullnode" {
       params_disk_name : local.params_disk_name,
       data_disk_name : local.data_disk_name,
       gcloud_project : var.project,
+      gcloud_region  : var.region,
+      gcloud_zone    : var.zone,
       external_ip_address : google_compute_address.fullnode.address
     }
   )
