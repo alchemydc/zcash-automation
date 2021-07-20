@@ -340,13 +340,9 @@ EOF
 systemctl daemon-reload
 systemctl enable zcashd.service
 
-echo "Checking for existing paramaters" | logger
-if [ -f /home/zcash/.zcash-params/sapling-output.params ] && [ -f sapling-spend.params ] && [ -f sprout-groth16.params ]; then
-  echo "/home/zcash/.zcash-params exist, skipping params download" | logger
-else
-  echo "Fetching zcash params" | logger
-  sudo -u zcash zcash-fetch-params
-fi
+
+echo "Fetching zcash params, if necessary" | logger
+sudo -u zcash zcash-fetch-params
 
 echo "Checking for existing chaindata" | logger
 if [ -d /home/zcash/.zcash/blocks ]; then

@@ -48,7 +48,7 @@ resource "google_compute_firewall" "sshd" {
   network = var.network_name
   depends_on = [google_compute_network.zcash_network]
 
-  target_tags   = ["full-node"]
+  target_tags   = ["fullnode"]
   #source_ranges = [data.google_compute_subnetwork.zcash.ip_cidr_range]
 
   allow {

@@ -1,7 +1,7 @@
 output internal_ip_addresses {
-  value = google_compute_address.faucet_internal.address
+  value = google_compute_address.fullnode_internal.address
 }
 
 output external_ip_addresses {
-  value = google_compute_address.faucet.address
+  value = google_compute_address.fullnode.address
 }

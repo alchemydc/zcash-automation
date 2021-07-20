@@ -41,7 +41,7 @@ resource "google_compute_disk" "zcashparams" {
 }
 
 resource "google_compute_instance" "fullnode" {
-  name = "fullnode"
+  name = "zcash-fullnode"
   #machine_type = "n1-standard-4"
   machine_type = "n1-standard-2"
   depends_on = [google_compute_disk.zcashdata]
