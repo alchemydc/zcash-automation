@@ -67,7 +67,7 @@ Support for GCP's Stackdriver platform has been enabled, which makes it easy to 
     
 
 ## Blockchain synchronization
-Once Zcashd is installed, the blockchain will be synchronized over the peer to peer (p2p) network.  As of July 2021 the blockchain is ~25GB and this initial sync takes ~36 hours.  Once the blockchain is synchronized, it will be automatically compressed and archived to GCS once a day (todo: expose backup frequency and method as variables).  Note that this backup process stops Zcashd for several minutes while the tarball backup is created.  Rsync can be used instead, which will perform incremental backups which are much faster.  Until these options are exposed as variables, you can modify [startup.sh](modules/fullnode/startup.sh) to enable the Rsync backup method, which is disabled by default.
+Once Zcashd is installed, the blockchain will be synchronized over the peer to peer (p2p) network.  As of July 2021 the blockchain is ~25GB and this initial sync takes ~36 hours.  Once the blockchain is synchronized, it will be automatically compressed and archived to GCS once a week.  Note that this backup process stops Zcashd for several minutes while the tarball backup is created.  Rsync is thus used instead for daily backups, and will perform incremental backups which are much faster.  Until these options are exposed as variables, you can modify [startup.sh](modules/fullnode/startup.sh) to change the schedule if required.
 
 ## Troubleshooting
 * If you get "Error retrieving IAM policy for storage bucket" or "Error creating firewall" or "Error creating instance" errors from Terraform, these are likely due to a race condition. Simply re-run terraform apply.

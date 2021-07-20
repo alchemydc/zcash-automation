@@ -213,10 +213,10 @@ chmod u+x /root/backup_rsync.sh
 
 cat <<'EOF' > /root/backup.crontab
 # m h  dom mon dow   command
-# backup full tarball once a day at 00:57
-57 0 * * * /root/backup.sh | logger
-# backup via rsync run every six hours at 00:17 past the hour
-17 */6 * * * /root/backup_rsync.sh | logger
+# backup full tarball once a week at 00:57 on Sunday
+57 0 * * 0 /root/backup.sh | logger
+# backup via rsync once a day at 00:17 past the hour
+17 0 * * * /root/backup_rsync.sh | logger
 EOF
 /usr/bin/crontab /root/backup.crontab
 
