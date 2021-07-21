@@ -225,9 +225,9 @@ echo "Stopping zcashd" | logger
 systemctl stop zcashd.service
 sleep 5
 echo "rsyncing blocks to GCS" | logger
-gsutil -m rsync -d -r /home/zcash/.zcash/blocks gs://${gcloud_project}-chaindata-rsync/
+gsutil -m rsync -d -r /home/zcash/.zcash/blocks gs://${gcloud_project}-chaindata-rsync/blocks
 echo "rsyncing chainstate to GCS" | logger
-gsutil -m rsync -d -r /home/zcash/.zcash/chainstate gs://${gcloud_project}-chaindata-rsync/
+gsutil -m rsync -d -r /home/zcash/.zcash/chainstate gs://${gcloud_project}-chaindata-rsync/chainstate
 echo "rsync chaindata backup completed" | logger
 sleep 3
 echo "starting zcashd" | logger
@@ -296,15 +296,18 @@ cat <<'EOF' > /root/restore_rsync.sh
 set -x
 
 # test to see if chaindata exists in the rsync chaindata bucket
-gsutil -q stat gs://${gcloud_project}-chaindata-rsync/blocks
+gsutil -q stat gs://${gcloud_project}-chaindata-rsync/blocks/blk00000.dat
 if [ $? -eq 0 ]
 then
   #chaindata exists in bucket
   echo "stopping zcashd" | logger
   systemctl stop zcashd.service
-  echo "downloading chaindata via rsync from gs://${gcloud_project}-chaindata-rsync" | logger
-  mkdir -p /home/zcash/.zcash
-  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync /home/zcash/.zcash/
+  echo "downloading blocks via rsync from gs://${gcloud_project}-chaindata-rsync/blocks" | logger
+  mkdir -p /home/zcash/.zcash/blocks
+  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/blocks /home/zcash/.zcash/blocks
+  echo "downloading chainstate via rsync from gs://${gcloud_project}-chaindata-rsync/chainstate" | logger
+  mkdir -p /home/zcash/.zcash/chainstate
+  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/chainstate /home/zcash/.zcash/chainstate
   echo "Setting perms on chaindata" | logger
   chown -R zcash:zcash /home/zcash/.zcash
   echo "starting zcashd" | logger
