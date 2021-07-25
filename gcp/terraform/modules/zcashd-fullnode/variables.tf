@@ -1,27 +1,3 @@
-variable replicas {
-  description = "The replica number for each component"
-  type        = map(number)
-
-  default = {
-    zcashd-archivenode         = 1
-    zcashd-fullnode            = 0
-    zcashd-privatenode         = 0 
-    zebrad-archivenode         = 1 
-  }
-}
-
-variable instance_types {
-  description = "The instance type for each component"
-  type        = map(string)
-
-  default = {
-    zcashd-archivenode         = "n1-standard-2"
-    zcashd-fullnode            = "n1-standard-2"
-    zcashd-privatenode         = "n1-standard-2"
-    zebrad-archivenode         = "n1-standard-2"
-  }
-}
-
 variable "project" {
   type = string
   description = "The GCP project"
@@ -56,36 +32,37 @@ variable "service_account_scopes" {
   default = [
     "https://www.googleapis.com/auth/monitoring.write",
     "https://www.googleapis.com/auth/logging.write",
-    "https://www.googleapis.com/auth/cloud-platform"         #this gives r/w to all storage buckets, which may be overly broad
+    "https://www.googleapis.com/auth/cloud-platform"         #this gives r/w to all storage buckets, which is overly broad
     ]
+}
+
+variable "data_disk_size" {
+  type = number
+  description = "Size (in GB) of the disk where the parameters and chaindata reside"
+  default = 100
 }
 
 variable "params_disk_name" {
   type = string
   description = "name of disk for persisting the Zcash parameters"
-  default = "zcashparams"
 }
 
 variable "data_disk_name" {
   type = string
   description = "name of disk for persisting the Zcash blockchain"
-  default = "zcashdata"
 }
 
-variable "zebra_params_disk_name" {
-  type = string
-  description = "name of disk for persisting the Zcash parameters"
-  default = "zebra-cargo"
+variable fullnode_count {
+  description = "Number of full nodes to spin up"
+  type = number
 }
 
-variable "zebra_data_disk_name" {
+variable instance_type {
+  description = "The GCP instance type to use for this node"
   type = string
-  description = "name of disk for persisting the Zcash blockchain"
-  default = "zebra-data"
 }
 
 variable "boot_disk_size" { 
   type = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
-  default = 10
 }
