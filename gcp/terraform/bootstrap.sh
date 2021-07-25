@@ -66,6 +66,7 @@ gcloud services enable serviceusage.googleapis.com
 gcloud services enable stackdriver.googleapis.com
 gcloud services enable clouderrorreporting.googleapis.com
 gcloud services enable iap.googleapis.com    #required for ssh into instances w/o public IP's
+gcloud alpha services enable compute.googleapis.com # required for troubleshooting ssh over iap
 
 echo "Enumerating default service account email address"
 GCP_DEFAULT_SERVICE_ACCOUNT=`gcloud iam service-accounts list | grep 'Compute Engine default service account' | cut -d ' ' -f 7`
