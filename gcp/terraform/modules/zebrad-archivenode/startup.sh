@@ -96,6 +96,7 @@ mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
 mount $DATA_DIR
+chown -R zebra:zebra $DATA_DIR
 
 # ---- Set Up Persistent Disk for .cargo dir ----
 
@@ -125,7 +126,7 @@ mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
 mount $DATA_DIR
-chown -R zcash:zcash $DATA_DIR
+chown -R zebra:zebra $DATA_DIR
 
 # ---- Setup swap
 echo "Setting up swapfile" | logger
@@ -262,14 +263,14 @@ then
   echo "untarring chaindata" | logger
   tar xvf /home/zebra/.cache/restore/zebra_chaindata.tgz -I pigz --directory /home/zebra/.cache
   echo "Setting perms on chaindata" | logger
-  chown -R zcash:zcash /home/zebra/.cache
+  chown -R zebra:zebra /home/zebra/.cache
   echo "removing chaindata tarball" | logger
   rm -rf /home/zebra/.cache/restore/zebra_chaindata.tgz
   sleep 3
   echo "starting zebrad" | logger
   systemctl start zebrad.service
   else
-    echo "No chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore" | logger
+    echo "No zebra_chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore" | logger
     echo "Starting zebrad" | logger
     systemctl start zebrad
   fi
