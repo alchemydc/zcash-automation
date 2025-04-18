@@ -1,5 +1,5 @@
 #!/bin/bash
-set -x
+set -ex
 
 ##########
 # this will create a new project in GCP, and prepare the service account for it as well as necessary API's
@@ -7,17 +7,43 @@ set -x
 # dependencies: gcloud cli, terraform cli
 
 GCLOUD_ENV_FILE="gcloud.env"
+# Check for terraform or tofu installation
+if command -v terraform >/dev/null 2>&1; then
+    TERRAFORM_CMD=$(which terraform)
+elif command -v tofu >/dev/null 2>&1; then
+    TERRAFORM_CMD=$(which tofu)
+else
+    echo "Error: Neither terraform nor tofu is installed"
+    echo "Please install either Terraform or OpenTofu to continue"
+    exit 1
+fi
+
+# check for proper installation of the gcloud cli SDK
+if ! command -v gcloud >/dev/null 2>&1; then
+    echo "Error: gcloud CLI is not installed"
+    echo "Please install the gcloud CLI to continue"
+    exit 1
+fi
+
+echo "Using ${TERRAFORM_CMD} as Terraform provider"
 
 echo "Sourcing gcloud env vars from gcloud.env."
 if [ -f gcloud.env ]; then
     source gcloud.env
 else
     cat <<'EOF' > $GCLOUD_ENV_FILE
+    # org ID: get with `gcloud organizations list --format="value(ID)"`
     export TF_VAR_org_id=YOUR_GCLOUD_ORG_ID
+    # billing account: get with `gcloud billing accounts list --format="value(name)"`
     export TF_VAR_billing_account=YOUR_GCLOUD_BILLING_ACCOUNT_ID
+    # project name: set it to something unique
     export TF_VAR_project=YOUR_TERRAFORM_GCP_PROJECT_NAME
+    # region: set to your desired region
     export TF_VAR_region=YOUR_TERRAFORM_GCP_region_NAME
+    # zone: set to your desired zone
     export TF_VAR_zone=YOUR_TERRAFORM_ZONE_NAME
+    # DO NOT CHANGE ANYTHING BELOW THIS LINE
+    # these allow terraform to use the created service account via downloaded creds
     export TF_CREDS=~/.config/gcloud/${USER}-${TF_VAR_project}.json
     export GOOGLE_APPLICATION_CREDENTIALS=${TF_CREDS}
     export GOOGLE_PROJECT=${TF_VAR_project}
@@ -135,7 +161,7 @@ echo "Enabling versioning on the state bucket for safety"
 gsutil versioning set on gs://${TF_STATE_BUCKET}
 
 echo "Initializing terraform"
-terraform init
+$TERRAFORM_CMD init
 
 echo "Don't forget to 'source gcloud.env' before using Terraform!"
 echo "A dynamically named service account was created that Terraform needs to know about"

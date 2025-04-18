@@ -43,13 +43,14 @@ resource "google_compute_router_nat" "nat" {
   }
 }
 
+# Update the sshd firewall rule to allow SSH from anywhere (or restrict to your IP range)
 resource "google_compute_firewall" "sshd" {
   name    = "sshd-firewall"
   network = var.network_name
   depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["fullnode", "privatenode", "archivenode"]
-  #source_ranges = [data.google_compute_subnetwork.zcash.ip_cidr_range]
+  source_ranges = ["0.0.0.0/0"]  # Consider restricting this to your IP range for security
 
   allow {
     protocol = "tcp"
@@ -57,13 +58,13 @@ resource "google_compute_firewall" "sshd" {
   }
 }
 
+# Update the zcashd firewall rule to allow public P2P connections
 resource "google_compute_firewall" "zcashd" {
   name    = "zcashd-firewall"
   network = var.network_name
-  #depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["archivenode"]
-  #source_ranges = [data.google_compute_subnetwork.zcash.ip_cidr_range]
+  source_ranges = ["0.0.0.0/0"]  # Allow P2P connections from anywhere
 
   allow {
     protocol = "tcp"

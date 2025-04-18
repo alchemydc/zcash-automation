@@ -6,6 +6,7 @@
 - Modernizing bootstrap.sh for gcloud SDK compatibility
 - Preparing for comprehensive script testing
 - Improving infrastructure initialization workflow
+- Enhancing deployment reliability and security
 
 ### Infrastructure Modules
 1. **Zcashd Nodes**
@@ -15,34 +16,28 @@
 
 2. **Zebra Nodes**
    - Archive node module implementation ✓
+   - Disabled by default
 
 ### Core Components
 - Terraform configurations established
 - GCP integration configured
 - Module structure defined
 - Startup scripts implemented
+- Updated for Debian 12 compatibility
 
 ## Recent Changes
 
-### Bootstrap Script Modernization
-- Removed deprecated beta/alpha commands
-- Modernized API management with array-based enablement
-- Enhanced IAM role assignments
-- Improved state bucket security with versioning
-- Updated service account handling
-- Added explicit monitoring and logging API enablement
-
-### Module Development
-- Implemented all planned node type modules
-- Created standardized module structure
-- Established consistent configuration patterns
-- Added startup script templates
-
-### Infrastructure Setup
-- Configured Terraform backend
-- Set up GCP provider integration
-- Implemented base infrastructure components
-- Added monitoring integration
+### Deployment Improvements
+- Added OpenTofu support alongside Terraform
+- Improved error handling in bootstrap script
+- Updated GCP environment variable documentation
+- Fixed firewall rules for public P2P connections
+- Modernized Zcash installation and systemd service
+- Added security hardening to systemd service
+- Updated logging to use structured format
+- Removed deprecated rsyslog config (now using journald)
+- Disabled zebrad-archivenode by default
+- Updated startup script for Debian 12 compatibility
 
 ## Next Steps
 

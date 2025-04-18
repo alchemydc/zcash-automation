@@ -6,7 +6,7 @@ variable replicas {
     zcashd-archivenode         = 1
     zcashd-fullnode            = 0
     zcashd-privatenode         = 0 
-    zebrad-archivenode         = 1 
+    zebrad-archivenode         = 0 
   }
 }
 

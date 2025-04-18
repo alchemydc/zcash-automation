@@ -21,10 +21,14 @@
      - Archive nodes
      - Full nodes
      - Private nodes
+   - Updated for Debian 12 compatibility
+   - Modernized installation and systemd service
+   - Security hardening applied to systemd service
 
 2. **Zebra**
    - Alternative implementation
    - Archive node support
+   - Disabled by default
 
 ## Development Setup
 
@@ -128,6 +132,7 @@
    - Metric gathering
    - Log aggregation
    - Performance monitoring
+   - Structured logging format
 
 2. **Analysis**
    - Pattern recognition

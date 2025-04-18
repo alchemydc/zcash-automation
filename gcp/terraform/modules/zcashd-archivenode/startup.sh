@@ -1,55 +1,30 @@
 #!/bin/bash
+# Add better error handling
+set -euo pipefail
+# Keep existing debug output
 set -x
+
+# Add a logging function
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
+}
+
+log "Starting node initialization"
 
 apt update && apt install -y screen htop nftables pigz
 
 # ---- Configure logrotate ----
-echo "Configuring logrotate" | logger
-cat <<'EOF' > '/etc/logrotate.d/rsyslog'
-/var/log/syslog
-/var/log/mail.info
-/var/log/mail.warn
-/var/log/mail.err
-/var/log/mail.log
-/var/log/daemon.log
-/var/log/kern.log
-/var/log/auth.log
-/var/log/user.log
-/var/log/lpr.log
-/var/log/cron.log
-/var/log/debug
-/var/log/messages
-{
-        rotate 3
-        daily
-        missingok
-        notifempty
-        delaycompress
-        compress
-        sharedscripts
-        postrotate
-                #invoke-rc.d rsyslog rotate > /dev/null   # does not work on debian10
-                kill -HUP `pidof rsyslogd`
-        endscript
-}
-EOF
-
-# zcashd -printtoconsole emits ANSI colors in logs, which won't render properly without this
-echo '$EscapeControlCharactersOnReceive off' >> /etc/rsyslog.conf
-
-# ---- Restart rsyslogd
-echo "Restarting rsyslogd"
-systemctl restart rsyslog
-
+# no longer needed since debian 12 uses systemd-journald which does it own log rotation
 
 # ---- Useful aliases ----
-echo "Configuring aliases" | logger
+log "Configuring aliases"
 echo "alias ll='ls -laF'" >> /etc/skel/.bashrc
 echo "alias ll='ls -laF'" >> /root/.bashrc
 
 
 # ---- Install Stackdriver Agent
-echo "Installing Stackdriver agent" | logger
+# this likely needs updating
+log "Installing Stackdriver agent"
 curl -sSO https://dl.google.com/cloudagents/add-monitoring-agent-repo.sh
 bash add-monitoring-agent-repo.sh
 apt update -y
@@ -57,7 +32,8 @@ apt install -y stackdriver-agent
 systemctl restart stackdriver-agent
 
 # ---- Install Fluent Log Collector
-echo "Installing google fluent log collector agent" | logger
+# this likely needs updating
+log "Installing google fluent log collector agent"
 curl -sSO https://dl.google.com/cloudagents/add-logging-agent-repo.sh
 bash add-logging-agent-repo.sh
 apt update -y
@@ -74,30 +50,30 @@ useradd -m zcash -s /bin/bash
 DISK_PATH=$(readlink -f /dev/disk/by-id/google-${data_disk_name})
 DATA_DIR=/home/zcash/.zcash
 
-echo "Setting up persistent disk ${data_disk_name} at $DISK_PATH..."
+log "Setting up persistent disk ${data_disk_name} at $DISK_PATH..."
 
 DISK_FORMAT=ext4
 CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
 
-echo "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
+log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
 
 # If the disk has already been formatted previously (this will happen
 # if this instance has been recreated with the same disk), we skip formatting
 if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  echo "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
+  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
 else
-  echo "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
+  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
   mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
 fi
 
 # Mounting the volume
-echo "Mounting $DISK_PATH onto $DATA_DIR"
+log "Mounting $DISK_PATH onto $DATA_DIR"
 mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
 mount $DATA_DIR
 
-echo "Creating zcash.conf" | logger
+log "Creating zcash.conf"
 cat <<'EOF' > $DATA_DIR/zcash.conf
 externalip=${external_ip_address}
 testnet=0
@@ -113,24 +89,24 @@ chown -R zcash:zcash /home/zcash
 DISK_PATH=$(readlink -f /dev/disk/by-id/google-${params_disk_name})
 DATA_DIR=/home/zcash/.zcash-params
 
-echo "Setting up persistent disk ${params_disk_name} at $DISK_PATH..."
+log "Setting up persistent disk ${params_disk_name} at $DISK_PATH..."
 
 DISK_FORMAT=ext4
 CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
 
-echo "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
+log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
 
 # If the disk has already been formatted previously (this will happen
 # if this instance has been recreated with the same disk), we skip formatting
 if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  echo "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
+  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
 else
-  echo "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
+  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
   mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
 fi
 
 # Mounting the volume
-echo "Mounting $DISK_PATH onto $DATA_DIR"
+log "Mounting $DISK_PATH onto $DATA_DIR"
 mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
@@ -138,7 +114,7 @@ mount $DATA_DIR
 chown -R zcash:zcash $DATA_DIR
 
 # ---- Setup swap
-echo "Setting up swapfile" | logger
+log "Setting up swapfile"
 fallocate -l 1G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile
@@ -146,7 +122,7 @@ swapon /swapfile
 swapon -s
 
 # ---- Config /etc/screenrc ----
-echo "Configuring /etc/screenrc" | logger
+log "Configuring /etc/screenrc"
 cat <<'EOF' >> '/etc/screenrc'
 bindkey -k k1 select 1  #  F1 = screen 1
 bindkey -k k2 select 2  #  F2 = screen 2
@@ -162,7 +138,7 @@ bindkey -k F2 next      # F12 = next
 EOF
 
 # ---- Create backup script
-echo "Creating chaindata backup script" | logger
+log "Creating chaindata backup script"
 cat <<'EOF' > /root/backup.sh
 #!/bin/bash
 # This script stops zcashd, tars up the chaindata (with bzip compression), and copies it to GCS.
@@ -171,20 +147,20 @@ cat <<'EOF' > /root/backup.sh
 # The rsync variant (below) is more efficient, but tarballs are more portable.
 set -x
 
-echo "Starting chaindata backup" | logger
-echo "Stopping zcashd" | logger
+log "Starting chaindata backup"
+log "Stopping zcashd"
 systemctl stop zcashd.service
 sleep 5
-echo "Tarring up chainstate and blocks" | logger
+log "Tarring up chainstate and blocks"
 mkdir /home/zcash/.zcash/backup
 tar -I "pigz --fast" -C /home/zcash/.zcash -cvf /home/zcash/.zcash/backup/chaindata.tgz blocks chainstate
-echo "copying tarball to GCS" | logger
+log "copying tarball to GCS"
 gsutil cp /home/zcash/.zcash/backup/chaindata.tgz gs://${gcloud_project}-chaindata
-echo "removing tarball from local fs" | logger
+log "removing tarball from local fs"
 rm -f /home/zcash/.zcash/backup/chaindata.tgz
-echo "Chaindata backup completed" | logger
+log "Chaindata backup completed"
 sleep 3
-echo "starting zcashd" | logger
+log "starting zcashd"
 systemctl start zcashd.service
 EOF
 chmod u+x /root/backup.sh
@@ -197,40 +173,40 @@ cat <<EOF > /root/backup_snapshot.sh
 # and supporting data.
 
 set -x
-echo "Deleting snapshots" | logger
+log "Deleting snapshots"
 echo 'y' | gcloud compute snapshots delete ${data_disk_name}-snapshot-latest 
 echo 'y' | gcloud compute snapshots delete ${params_disk_name}-snapshot-latest
-echo "Taking snapshot of Zcash params disk" | logger
+log "Taking snapshot of Zcash params disk"
 gcloud compute disks snapshot ${params_disk_name} --snapshot-names=${params_disk_name}-snapshot-latest --zone=${gcloud_zone}
-echo "Stopping zcashd"
+log "Stopping zcashd"
 systemctl stop zcashd
 sleep 5
-echo "Taking snapshot of Zcash data disk" | logger
+log "Taking snapshot of Zcash data disk"
 gcloud compute disks snapshot ${data_disk_name} --snapshot-names=${data_disk_name}-snapshot-latest --zone=${gcloud_zone}
 sleep 3
-echo "starting zcashd" | logger
+log "starting zcashd"
 systemctl start zcashd.service
 EOF
 chmod u+x /root/backup_snapshot.sh
 
 # ---- Create rsync backup script
-echo "Creating rsync chaindata backup script" | logger
+log "Creating rsync chaindata backup script"
 cat <<'EOF' > /root/backup_rsync.sh
 #!/bin/bash
 # This script stops zcashd, and uses rsync to copy chaindata to GCS.
 set -x
 
-echo "Starting rsync chaindata backup" | logger
-echo "Stopping zcashd" | logger
+log "Starting rsync chaindata backup"
+log "Stopping zcashd"
 systemctl stop zcashd.service
 sleep 5
-echo "rsyncing blocks to GCS" | logger
+log "rsyncing blocks to GCS"
 gsutil -m rsync -d -r /home/zcash/.zcash/blocks gs://${gcloud_project}-chaindata-rsync/zcashd/blocks
-echo "rsyncing chainstate to GCS" | logger
+log "rsyncing chainstate to GCS"
 gsutil -m rsync -d -r /home/zcash/.zcash/chainstate gs://${gcloud_project}-chaindata-rsync/zcashd/chainstate
-echo "rsync chaindata backup completed" | logger
+log "rsync chaindata backup completed"
 sleep 3
-echo "starting zcashd" | logger
+log "starting zcashd"
 systemctl start zcashd.service
 EOF
 chmod u+x /root/backup_rsync.sh
@@ -252,7 +228,7 @@ EOF
 /usr/bin/crontab /root/backup.crontab
 
 # ---- Create restore script
-echo "Creating chaindata restore script" | logger
+log "Creating chaindata restore script"
 cat <<'EOF' > /root/restore.sh
 #!/bin/bash
 set -x
@@ -264,33 +240,33 @@ then
   #chaindata exists in bucket
   mkdir -p /home/zcash/.zcash
   mkdir -p /home/zcash/.zcash/restore
-  echo "downloading chaindata from gs://${gcloud_project}-chaindata/chaindata.tgz" | logger
+  log "downloading chaindata from gs://${gcloud_project}-chaindata/chaindata.tgz"
   gsutil cp gs://${gcloud_project}-chaindata/chaindata.tgz /home/zcash/.zcash/restore/chaindata.tgz
-  echo "stopping zcashd to untar chaindata" | logger
+  log "stopping zcashd to untar chaindata"
   systemctl stop zcashd.service
   sleep 3
-  echo "Deleting old chaindata" | logger
+  log "Deleting old chaindata"
   rm -rf /home/zcash/.zcash/blocks/*
   rm -rf /home/zcash/.zcash/chainstate/*
-  echo "untarring chaindata" | logger
+  log "untarring chaindata"
   tar xvf /home/zcash/.zcash/restore/chaindata.tgz -I pigz --directory /home/zcash/.zcash
-  echo "Setting perms on chaindata" | logger
+  log "Setting perms on chaindata"
   chown -R zcash:zcash /home/zcash/.zcash
-  echo "removing chaindata tarball" | logger
+  log "removing chaindata tarball"
   rm -rf /home/zcash/.zcash/restore/chaindata.tgz
   sleep 3
-  echo "starting zcashd" | logger
+  log "starting zcashd"
   systemctl start zcashd.service
   else
-    echo "No chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore" | logger
-    echo "Starting zcashd" | logger
+    log "No chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore"
+    log "Starting zcashd"
     systemctl start zcashd
   fi
 EOF
 chmod u+x /root/restore.sh
 
 # ---- Create rsync restore script
-echo "Creating rsync chaindata restore script" | logger
+log "Creating rsync chaindata restore script"
 cat <<'EOF' > /root/restore_rsync.sh
 #!/bin/bash
 set -x
@@ -300,26 +276,26 @@ gsutil -q stat gs://${gcloud_project}-chaindata-rsync/zcashd/blocks/blk00000.dat
 if [ $? -eq 0 ]
 then
   #chaindata exists in bucket
-  echo "stopping zcashd" | logger
+  log "stopping zcashd"
   systemctl stop zcashd.service
-  echo "downloading blocks via rsync from gs://${gcloud_project}-chaindata-rsync/zcashd/blocks" | logger
+  log "downloading blocks via rsync from gs://${gcloud_project}-chaindata-rsync/zcashd/blocks"
   mkdir -p /home/zcash/.zcash/blocks
   gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/zcashd/blocks /home/zcash/.zcash/blocks
-  echo "downloading chainstate via rsync from gs://${gcloud_project}-chaindata-rsync/zcashd/chainstate" | logger
+  log "downloading chainstate via rsync from gs://${gcloud_project}-chaindata-rsync/zcashd/chainstate"
   mkdir -p /home/zcash/.zcash/chainstate
   gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/zcashd/chainstate /home/zcash/.zcash/chainstate
-  echo "Setting perms on chaindata" | logger
+  log "Setting perms on chaindata"
   chown -R zcash:zcash /home/zcash/.zcash
-  echo "starting zcashd" | logger
+  log "starting zcashd"
   sleep 3
   systemctl start zcashd.service
   else
-    echo "No chaindata found in bucket gs://${gcloud_project}-chaindata-rsync, aborting warp restore" | logger
+    log "No chaindata found in bucket gs://${gcloud_project}-chaindata-rsync, aborting warp restore"
   fi
 EOF
 chmod u+x /root/restore_rsync.sh
 
-echo "Configuring firewall rules" | logger
+log "Configuring firewall rules"
  tee <<EOF >/dev/null /etc/nftables.conf
 #!/usr/sbin/nft -f
 flush ruleset
@@ -339,33 +315,51 @@ table inet filter {
 }
 EOF
 
-echo "Enabling host nftables firewall" | logger
+log "Enabling host nftables firewall"
 systemctl enable nftables.service
 systemctl start nftables.service
 
-echo "Installing Zcash from debian package" | logger
-sudo apt install -y apt-transport-https wget gnupg2
-wget -qO - https://apt.z.cash/zcash.asc | gpg --import
-gpg --export 3FE63B67F85EA808DE9B880E6DEF3BAF272766C0 | sudo apt-key add -
-echo "deb [arch=amd64] https://apt.z.cash/ stretch main" | sudo tee /etc/apt/sources.list.d/zcash.list
+log "Installing Zcash from debian package"
+if ! apt install -y apt-transport-https wget gnupg2; then
+    log "ERROR: Failed to install prerequisites"
+    exit 1
+fi
+
+# Add Electric Coin GPG key and repository with verification
+if wget -qO - https://apt.z.cash/zcash.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/zcash.gpg > /dev/null; then
+    log "Successfully added Zcash GPG key"
+else
+    log "ERROR: Failed to add Zcash GPG key"
+    exit 1
+fi
+
 apt update && apt install -y zcash
 
-echo "Configuring zcashd systemd service" | logger
+log "Configuring zcashd systemd service"
 cat <<EOF >/etc/systemd/system/zcashd.service
 [Unit]
-Description=Zcashd
-Requires=zcashd.service
+Description=Zcash Daemon
+After=network.target
+Requires=network.target
 
 [Service]
 User=zcash
 Group=zcash
+Type=simple
 ExecStart=/usr/bin/zcashd -printtoconsole
 ExecStop=/usr/bin/zcash-cli stop
-Restart=on-failure
 RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=300
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=zcashd
+
+# Security hardening
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target
@@ -375,16 +369,13 @@ systemctl daemon-reload
 systemctl enable zcashd.service
 
 
-echo "Fetching zcash params, if necessary" | logger
-sudo -u zcash zcash-fetch-params
-
-echo "Checking for existing chaindata" | logger
+log "Checking for existing chaindata"
 if [ -d /home/zcash/.zcash/blocks ]; then
-  echo "/home/zcash/.zcash/blocks directory exists, skipping chaindata restore"
-  echo "Starting zcashd" | logger
+  log "/home/zcash/.zcash/blocks directory exists, skipping chaindata restore"
+  log "Starting zcashd"
   systemctl start zcashd
 else
-  echo "Restoring chaindata from GCS tarball, if available" | logger
-  echo "Note that chaindata from GCS via rsync may be more fresh, and can be restored by running /root/restore_rsync.sh" | logger
+  log "Restoring chaindata from GCS tarball, if available"
+  log "Note that chaindata from GCS via rsync may be more fresh, and can be restored by running /root/restore_rsync.sh"
   /root/restore.sh
 fi
