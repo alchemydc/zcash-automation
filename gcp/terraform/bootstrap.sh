@@ -32,55 +32,60 @@ gcloud projects create ${TF_VAR_project} \
     --set-as-default
 
 echo "Linking new gcloud project to billing account"
-gcloud beta billing projects link ${TF_VAR_project}  \
+gcloud billing projects link ${TF_VAR_project} \
     --billing-account ${TF_VAR_billing_account}
 
 echo "Creating iam service account for terraform"
 gcloud iam service-accounts create terraform \
-  --display-name "Terraform admin account"
+    --display-name "Terraform admin account"
 
 echo "Creating gcloud keys on filesystem for terraform"
 gcloud iam service-accounts keys create ${TF_CREDS} \
-  --iam-account terraform@${TF_VAR_project}.iam.gserviceaccount.com
+    --iam-account terraform@${TF_VAR_project}.iam.gserviceaccount.com
 
-echo "Granting storage.admin and logging.configWriter and project editor and monitoring.admin roles to terraform service account."
-gcloud projects add-iam-policy-binding ${TF_VAR_project} \
-  --member serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com \
-  --role roles/storage.admin
-gcloud projects add-iam-policy-binding ${TF_VAR_project} \
-  --member serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com \
-  --role roles/logging.configWriter
-gcloud projects add-iam-policy-binding ${TF_VAR_project} \
-  --member serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com \
-  --role roles/editor
-  gcloud projects add-iam-policy-binding ${TF_VAR_project} \
-  --member serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com \
-  --role roles/monitoring.admin
+echo "Granting required roles to terraform service account"
+TERRAFORM_SA="serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com"
+ROLES=(
+    "roles/storage.admin"
+    "roles/logging.configWriter"
+    "roles/editor"
+    "roles/monitoring.admin"
+)
+
+for ROLE in "${ROLES[@]}"; do
+    gcloud projects add-iam-policy-binding ${TF_VAR_project} \
+        --member ${TERRAFORM_SA} \
+        --role ${ROLE}
+done
 
 echo "Enabling required gcp API's for terraform"
-gcloud services enable cloudresourcemanager.googleapis.com
-gcloud services enable cloudbilling.googleapis.com
-gcloud services enable iam.googleapis.com
-gcloud services enable compute.googleapis.com
-gcloud services enable serviceusage.googleapis.com
-gcloud services enable stackdriver.googleapis.com
-gcloud services enable clouderrorreporting.googleapis.com
-gcloud services enable iap.googleapis.com    #required for ssh into instances w/o public IP's
-gcloud alpha services enable compute.googleapis.com # required for troubleshooting ssh over iap
+REQUIRED_APIS=(
+    "cloudresourcemanager.googleapis.com"
+    "cloudbilling.googleapis.com"
+    "iam.googleapis.com"
+    "compute.googleapis.com"
+    "serviceusage.googleapis.com"
+    "monitoring.googleapis.com"
+    "logging.googleapis.com"
+    "clouderrorreporting.googleapis.com"
+    "iap.googleapis.com"
+)
+
+for API in "${REQUIRED_APIS[@]}"; do
+    gcloud services enable ${API}
+done
 
 echo "Enumerating default service account email address"
-GCP_DEFAULT_SERVICE_ACCOUNT=`gcloud iam service-accounts list | grep 'Compute Engine default service account' | cut -d ' ' -f 7`
+GCP_DEFAULT_SERVICE_ACCOUNT=$(gcloud iam service-accounts list \
+    --format="value(email)" \
+    --filter="displayName:'Compute Engine default service account'")
 echo "export TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT=\"$GCP_DEFAULT_SERVICE_ACCOUNT\"" >> gcloud.env
-#plan is to use this from within TF to grant explicit access to a logs bucket rather than use a broad storage.rw scope
 
 echo "Creating a bucket for storing remote TFSTATE"
-#note namespace on gcp cloud storage buckets is global, so this must be unique
 TF_STATE_BUCKET=${TF_VAR_project}-tfstate
 gsutil mb -p ${TF_VAR_project} gs://${TF_STATE_BUCKET}
-#gsutil iam ch serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com:objectCreator,objectViewer gs://${TF_STATE_BUCKET}
-#above is redundant, given that tf svc acct has storage.admin role, but granting it explictly here anyway.
-# this works, but results in 'no change'. default svc account can still hit the TF_STATE_BUCKET
-#gsutil iam ch -d serviceAccount:${TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT} gs://${TF_STATE_BUCKET}
+
+# Create IAM policy for the state bucket
 cat > iam.txt << EOF
 {
   "bindings": [
@@ -98,21 +103,25 @@ cat > iam.txt << EOF
     },
     {
       "members": [
-        "serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com"
+        "${TERRAFORM_SA}"
       ],
       "role": "roles/storage.objectCreator"
     },
     {
       "members": [
-        "serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com"
+        "${TERRAFORM_SA}"
       ],
       "role": "roles/storage.objectViewer"
     }
-  ]
+  ],
+  "version": "1"
 }
 EOF
 
+# Apply the IAM policy to the state bucket
+gsutil iam set iam.txt gs://${TF_STATE_BUCKET}
 
+# Create Terraform backend configuration
 cat > backend.tf << EOF
 terraform {
  backend "gcs" {
@@ -122,10 +131,11 @@ terraform {
 }
 EOF
 
+echo "Enabling versioning on the state bucket for safety"
+gsutil versioning set on gs://${TF_STATE_BUCKET}
+
 echo "Initializing terraform"
 terraform init
 
 echo "Don't forget to 'source gcloud.env' before using Terraform!"
 echo "A dynamically named service account was created that Terraform needs to know about"
-
-
