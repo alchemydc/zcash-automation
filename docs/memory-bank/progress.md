@@ -16,12 +16,17 @@
    - ✓ Startup scripts
    - ✓ Bootstrap script modernization
    - ✓ Debian 12 compatibility updates
+   - ✓ Switched from static service account keys to short-lived tokens
+   - ✓ Simplified bucket IAM permissions to use `storage.admin`
+   - ✓ Enhanced error handling for credential initialization
+   - ✓ Improved logging and error messages
 
 3. **Monitoring**
    - ✓ Stackdriver integration
    - ✓ Basic logging setup
    - ✓ Resource monitoring
    - ✓ Structured logging format
+   - ✓ Updated documentation with new role requirements
 
 ## What's Left to Build
 
@@ -33,6 +38,8 @@
    - [ ] State bucket configuration testing
    - [ ] Service account setup validation
    - [ ] Validate Debian 12 compatibility
+   - [ ] Validate short-lived token implementation
+   - [ ] Test simplified bucket IAM permissions
 
 ### High Priority
 1. **Documentation**

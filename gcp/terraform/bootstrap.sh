@@ -43,10 +43,7 @@ else
     # zone: set to your desired zone
     export TF_VAR_zone=YOUR_TERRAFORM_ZONE_NAME
     # DO NOT CHANGE ANYTHING BELOW THIS LINE
-    # these allow terraform to use the created service account via downloaded creds
-    export TF_CREDS=~/.config/gcloud/${USER}-${TF_VAR_project}.json
-    export GOOGLE_APPLICATION_CREDENTIALS=${TF_CREDS}
-    export GOOGLE_PROJECT=${TF_VAR_project}
+    # these allow terraform to use the created service account via short-lived credentials
 EOF
 echo "Please set gcloud environment variables in $GCLOUD_ENV_FILE before running $0"
 exit 1
@@ -65,12 +62,24 @@ echo "Creating iam service account for terraform"
 gcloud iam service-accounts create terraform \
     --display-name "Terraform admin account"
 
-echo "Creating gcloud keys on filesystem for terraform"
-gcloud iam service-accounts keys create ${TF_CREDS} \
-    --iam-account terraform@${TF_VAR_project}.iam.gserviceaccount.com
+echo "Sleeping 60s to wait for service account to propagate"
+sleep 60
+
+echo "Generating short-lived access token for terraform"
+gcloud auth print-access-token --impersonate-service-account terraform@${TF_VAR_project}.iam.gserviceaccount.com --format=json
+
+# setup gcloud.env to auto-refresh creds
+echo "Configuring gcloud.env to get a new short lived access token when sourced"
+echo "export TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT=terraform@${TF_VAR_project}.iam.gserviceaccount.com" >> gcloud.env
+echo 'export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token --impersonate-service-account terraform@${TF_VAR_project}.iam.gserviceaccount.com)' >> gcloud.env
 
 echo "Granting required roles to terraform service account"
-TERRAFORM_SA="serviceAccount:terraform@${TF_VAR_project}.iam.gserviceaccount.com"
+# storage.admin is required to write to the tfstate bucket [fixme]
+# logging.configWriter is required to write to stackdriver
+# editor is required to create and manage resources
+# monitoring.admin is required to create and manage monitoring resources
+TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT="terraform@${TF_VAR_project}.iam.gserviceaccount.com"
+TERRAFORM_SA=${TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT}
 ROLES=(
     "roles/storage.admin"
     "roles/logging.configWriter"
@@ -80,7 +89,7 @@ ROLES=(
 
 for ROLE in "${ROLES[@]}"; do
     gcloud projects add-iam-policy-binding ${TF_VAR_project} \
-        --member ${TERRAFORM_SA} \
+        --member "serviceAccount:${TERRAFORM_SA}" \
         --role ${ROLE}
 done
 
@@ -101,51 +110,37 @@ for API in "${REQUIRED_APIS[@]}"; do
     gcloud services enable ${API}
 done
 
-echo "Enumerating default service account email address"
-GCP_DEFAULT_SERVICE_ACCOUNT=$(gcloud iam service-accounts list \
-    --format="value(email)" \
-    --filter="displayName:'Compute Engine default service account'")
-echo "export TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT=\"$GCP_DEFAULT_SERVICE_ACCOUNT\"" >> gcloud.env
+# Create and configure state bucket
+echo "Creating and configuring terraform state bucket..."
+TF_STATE_BUCKET="${TF_VAR_project}-tfstate"
 
-echo "Creating a bucket for storing remote TFSTATE"
-TF_STATE_BUCKET=${TF_VAR_project}-tfstate
-gsutil mb -p ${TF_VAR_project} gs://${TF_STATE_BUCKET}
+if ! gsutil mb -p "${TF_VAR_project}" "gs://${TF_STATE_BUCKET}"; then
+    echo "Error: Failed to create state bucket"
+    exit 1
+fi
+
+# Configure state bucket to use versioning
+gsutil versioning set on "gs://${TF_STATE_BUCKET}"
 
 # Create IAM policy for the state bucket
-cat > iam.txt << EOF
+cat > iam.json << EOF
 {
   "bindings": [
     {
       "members": [
-        "projectOwner:${TF_VAR_project}"
+        "projectOwner:${TF_VAR_project}",
+        "serviceAccount:${TERRAFORM_SA}"
       ],
-      "role": "roles/storage.legacyBucketOwner"
-    },
-    {
-      "members": [
-        "projectViewer:${TF_VAR_project}"
-      ],
-      "role": "roles/storage.legacyBucketReader"
-    },
-    {
-      "members": [
-        "${TERRAFORM_SA}"
-      ],
-      "role": "roles/storage.objectCreator"
-    },
-    {
-      "members": [
-        "${TERRAFORM_SA}"
-      ],
-      "role": "roles/storage.objectViewer"
+      "role": "roles/storage.admin"
     }
   ],
-  "version": "1"
+  "version": 1
 }
 EOF
 
 # Apply the IAM policy to the state bucket
-gsutil iam set iam.txt gs://${TF_STATE_BUCKET}
+gsutil iam set iam.json gs://${TF_STATE_BUCKET}
+rm -f iam.json
 
 # Create Terraform backend configuration
 cat > backend.tf << EOF
@@ -157,11 +152,18 @@ terraform {
 }
 EOF
 
-echo "Enabling versioning on the state bucket for safety"
-gsutil versioning set on gs://${TF_STATE_BUCKET}
+echo "Don't forget to 'source gcloud.env' before using Terraform each session"
+echo "A dynamically named service account was created that Terraform needs to know about"
+echo "Sourcing gcloud.env will set the GOOGLE_APPLICATION_CREDENTIALS environment variable to the short lived service account token"
+echo "These tokens expire after 1 hour, so you will need to re-source gcloud.env to get a new token"
+echo "Sourcing gcloud.env"
+# Source the environment with new credentials
+if ! source ./gcloud.env; then
+    echo "Error: Failed to initialize credentials"
+    exit 1
+fi
 
 echo "Initializing terraform"
 $TERRAFORM_CMD init
 
-echo "Don't forget to 'source gcloud.env' before using Terraform!"
-echo "A dynamically named service account was created that Terraform needs to know about"
+echo "Terraform is now ready to use with the new project"

@@ -35,6 +35,8 @@ Support for GCP's Stackdriver platform has been enabled, which makes it easy to 
     ```
     This will spawn a browser window and use Oauth to authenticate the gcloud sdk to your GCP account.  Note that your account must have (at a minimum), permissions to create a new project in your GCP organization.
 
+    You must also ensure that the GCP user you are logging in with to bootstrap the project has permission to create new projects in your GCP org, and also has the `roles/iam.serviceAccountTokenCreator` role as this is needed to create the temporary access tokens that will be used by terraform/opentofu.
+
 4. Run bootstrap.sh
    ```console
     ./bootstrap.sh

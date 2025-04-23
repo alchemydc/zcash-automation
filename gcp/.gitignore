@@ -2,3 +2,4 @@ gcloud.env
 .terraform*
 backend.tf
 iam.txt
+*.env

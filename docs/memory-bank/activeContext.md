@@ -38,6 +38,12 @@
 - Removed deprecated rsyslog config (now using journald)
 - Disabled zebrad-archivenode by default
 - Updated startup script for Debian 12 compatibility
+- Switched from static service account keys to short-lived tokens
+- Added `serviceAccountTokenCreator` role requirement
+- Simplified bucket IAM permissions to use `storage.admin`
+- Enhanced error handling for credential initialization
+- Improved logging and error messages
+- Updated documentation with new role requirements
 
 ## Next Steps
 
