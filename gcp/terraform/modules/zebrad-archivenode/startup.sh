@@ -1,6 +1,9 @@
 #!/bin/bash
 set -x
 
+# Injected by Terraform
+ENABLE_CRON_BACKUPS="${enable_cron_backups}"
+
 apt update && apt install -y screen htop nftables pigz clang libclang1 libclang-dev build-essential llvm 
 
 # ---- Configure logrotate ----
@@ -226,6 +229,7 @@ chmod u+x /root/backup_rsync.sh
 
 # ---- Add backups to cron
 
+if [ "${ENABLE_CRON_BACKUPS}" = "true" ]; then
 cat <<'EOF' > /root/backup.crontab
 # m h  dom mon dow   command
 # backup full tarball once a week at 00:57 on Sunday
@@ -239,6 +243,7 @@ cat <<'EOF' > /root/backup.crontab
 20 04 * * * /root/backup_snapshot.sh | logger
 EOF
 /usr/bin/crontab /root/backup.crontab
+fi
 
 # ---- Create restore script
 echo "Creating chaindata restore script" | logger

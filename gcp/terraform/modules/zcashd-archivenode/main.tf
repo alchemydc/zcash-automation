@@ -63,7 +63,8 @@ resource "google_compute_instance" "archivenode" {
       gcloud_project : var.project,
       gcloud_region  : var.region,
       gcloud_zone    : var.zone,
-      external_ip_address : google_compute_address.archivenode.address
+      external_ip_address : google_compute_address.archivenode.address,
+      enable_cron_backups : var.enable_cron_backups
     }
   )
 

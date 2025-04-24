@@ -140,3 +140,14 @@ This project is not designed to automate the management of Zcashd wallets.  If y
 * Detailed info on connected peers: `gcloud compute ssh "zcash-fullnode" --command "sudo -u zcash zcash-cli getpeerinfo" | jq .`
 * Create a shielded address: `gcloud compute ssh "zcash-fullnode" --command "sudo -u zcash zcash-cli z_getnewaddress"`
 * See total balance: `gcloud compute ssh "zcash-fullnode" --command "sudo -u zcash zcash-cli z_gettotalbalance"`
+
+---
+
+## Module Variable: enable_cron_backups
+
+- **Type:** bool
+- **Default:** false
+
+Controls whether backup cron jobs are scheduled on provisioned archive nodes (zcashd-archivenode and zebrad-archivenode).  
+Set to `true` in the module configuration to enable automatic installation of backup cron jobs during provisioning.  
+This variable is defined and set at the module level; it is not inherited from the project root.

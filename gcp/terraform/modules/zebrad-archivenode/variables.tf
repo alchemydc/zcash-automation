@@ -66,3 +66,9 @@ variable "boot_disk_size" {
   type = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
 }
+
+variable "enable_cron_backups" {
+  description = "Whether to schedule backup cron jobs for the archive node"
+  type        = bool
+  default     = false
+}

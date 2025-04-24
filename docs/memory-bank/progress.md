@@ -20,6 +20,8 @@
    - ✓ Simplified bucket IAM permissions to use `storage.admin`
    - ✓ Enhanced error handling for credential initialization
    - ✓ Improved logging and error messages
+   - ✓ Added `enable_cron_backups` variable (default: false) to zcashd-archivenode and zebrad-archivenode modules, with documentation in module and top-level READMEs
+   - ✓ Startup scripts now use Google Ops Agent for logging/monitoring, replacing Stackdriver and Fluentd agents
 
 3. **Monitoring**
    - ✓ Stackdriver integration
@@ -40,6 +42,10 @@
    - [ ] Validate Debian 12 compatibility
    - [ ] Validate short-lived token implementation
    - [ ] Test simplified bucket IAM permissions
+
+2. **Archive Node Deployment & Logging Validation**
+   - [ ] Deploy a zcash archive node
+   - [ ] Verify logs are visible in Stackdriver (via Google Ops Agent)
 
 ### High Priority
 1. **Documentation**
@@ -159,6 +165,8 @@ Testing:          [----------]   0%
    - State bucket security improvements
    - Debian 12 compatibility updates
    - Structured logging format
+   - Added `enable_cron_backups` variable (default: false) for archive node modules
+   - Startup scripts now use Google Ops Agent for logging/monitoring, replacing Stackdriver and Fluentd agents
 
 ### Future Considerations
 1. **Short Term**

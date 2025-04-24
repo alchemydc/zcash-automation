@@ -44,6 +44,8 @@
 - Enhanced error handling for credential initialization
 - Improved logging and error messages
 - Updated documentation with new role requirements
+- Added `enable_cron_backups` variable (default: false) to zcashd-archivenode and zebrad-archivenode modules, with documentation in module and top-level READMEs
+- Startup scripts now use Google Ops Agent for logging/monitoring, replacing Stackdriver and Fluentd agents
 
 ## Next Steps
 
@@ -54,6 +56,10 @@
    - Verification of IAM role assignments
    - State bucket configuration testing
    - Service account setup validation
+
+2. **Archive Node Deployment & Logging Validation**
+   - Deploy a zcash archive node
+   - Verify logs are visible in Stackdriver (via Google Ops Agent)
 
 ### Short Term
 1. **Testing & Validation**

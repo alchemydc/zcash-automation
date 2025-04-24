@@ -4,6 +4,9 @@ set -euo pipefail
 # Keep existing debug output
 set -x
 
+# Injected by Terraform
+ENABLE_CRON_BACKUPS="${enable_cron_backups}"
+
 # Add a logging function
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
@@ -21,25 +24,10 @@ log "Configuring aliases"
 echo "alias ll='ls -laF'" >> /etc/skel/.bashrc
 echo "alias ll='ls -laF'" >> /root/.bashrc
 
-
-# ---- Install Stackdriver Agent
-# this likely needs updating
-log "Installing Stackdriver agent"
-curl -sSO https://dl.google.com/cloudagents/add-monitoring-agent-repo.sh
-bash add-monitoring-agent-repo.sh
-apt update -y
-apt install -y stackdriver-agent
-systemctl restart stackdriver-agent
-
-# ---- Install Fluent Log Collector
-# this likely needs updating
-log "Installing google fluent log collector agent"
-curl -sSO https://dl.google.com/cloudagents/add-logging-agent-repo.sh
-bash add-logging-agent-repo.sh
-apt update -y
-apt install -y google-fluentd
-apt install -y google-fluentd-catch-all-config-structured
-systemctl restart google-fluentd
+# ---- Install Google Ops Agent ----
+log "Installing Google Ops Agent"
+curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+bash add-google-cloud-ops-agent-repo.sh --also-install
 
 # add zcash user
 useradd -m zcash -s /bin/bash
@@ -213,6 +201,7 @@ chmod u+x /root/backup_rsync.sh
 
 # ---- Add backups to cron
 
+if [ "${ENABLE_CRON_BACKUPS}" = "true" ]; then
 cat <<'EOF' > /root/backup.crontab
 # m h  dom mon dow   command
 # backup full tarball once a week at 00:57 on Sunday
@@ -226,6 +215,7 @@ cat <<'EOF' > /root/backup.crontab
 20 04 * * * /root/backup_snapshot.sh | logger
 EOF
 /usr/bin/crontab /root/backup.crontab
+fi
 
 # ---- Create restore script
 log "Creating chaindata restore script"
