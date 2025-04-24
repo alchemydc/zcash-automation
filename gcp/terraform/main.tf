@@ -46,7 +46,7 @@ resource "google_compute_router_nat" "nat" {
 # Update the sshd firewall rule to allow SSH from anywhere (or restrict to your IP range)
 resource "google_compute_firewall" "sshd" {
   name    = "sshd-firewall"
-  network = var.network_name
+  network = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["fullnode", "privatenode", "archivenode"]
@@ -61,7 +61,8 @@ resource "google_compute_firewall" "sshd" {
 # Update the zcashd firewall rule to allow public P2P connections
 resource "google_compute_firewall" "zcashd" {
   name    = "zcashd-firewall"
-  network = var.network_name
+  network = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["archivenode"]
   source_ranges = ["0.0.0.0/0"]  # Allow P2P connections from anywhere
@@ -74,8 +75,8 @@ resource "google_compute_firewall" "zcashd" {
 
 resource "google_compute_firewall" "zcashd_private" {
   name    = "zcashd-firewall-private"
-  network = var.network_name
-  #depends_on = [google_compute_network.zcash_network]
+  network = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["fullnode"]
   source_ranges = [data.google_compute_subnetwork.zcash_subnetwork.ip_cidr_range]
@@ -102,6 +103,7 @@ module "zcashd-fullnode" {
   boot_disk_size                 = var.boot_disk_size
   subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                       = var.os_image
+  depends_on                     = [google_compute_network.zcash_network]
 }
 
 module "zcashd-privatenode" {
@@ -121,6 +123,7 @@ module "zcashd-privatenode" {
   boot_disk_size                 = var.boot_disk_size
   subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                       = var.os_image
+  depends_on                     = [google_compute_network.zcash_network]
 }
 
 module "zcashd-archivenode" {
@@ -139,6 +142,7 @@ module "zcashd-archivenode" {
   boot_disk_size                 = var.boot_disk_size
   subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                       = var.os_image
+  depends_on                     = [google_compute_network.zcash_network]
 }
 
 module "zebradd-archivenode" {
@@ -157,6 +161,7 @@ module "zebradd-archivenode" {
   boot_disk_size                 = var.boot_disk_size
   subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                       = var.os_image
+  depends_on                     = [google_compute_network.zcash_network]
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {

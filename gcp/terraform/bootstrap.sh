@@ -62,8 +62,8 @@ echo "Creating iam service account for terraform"
 gcloud iam service-accounts create terraform \
     --display-name "Terraform admin account"
 
-echo "Sleeping 60s to wait for service account to propagate"
-sleep 60
+echo "Sleeping to wait for service account to propagate"
+sleep 90
 
 echo "Generating short-lived access token for terraform"
 gcloud auth print-access-token --impersonate-service-account terraform@${TF_VAR_project}.iam.gserviceaccount.com --format=json
@@ -82,9 +82,13 @@ TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT="terraform@${TF_VAR_project}.iam.gserviceacco
 TERRAFORM_SA=${TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT}
 ROLES=(
     "roles/storage.admin"
-    "roles/logging.configWriter"
-    "roles/editor"
-    "roles/monitoring.admin"
+    "roles/logging.logWriter"           # Allows writing logs
+    "roles/logging.configWriter"        # Allows configuring log sinks and exports
+    "roles/monitoring.metricWriter"     # Allows writing metrics
+    "roles/monitoring.admin"            # Allows managing monitoring
+    "roles/editor"                      # General resource management
+    "roles/cloudtrace.agent"           # Allows writing trace data
+    "roles/errorreporting.writer"      # Allows writing to Error Reporting
 )
 
 for ROLE in "${ROLES[@]}"; do
@@ -95,6 +99,7 @@ done
 
 echo "Enabling required gcp API's for terraform"
 REQUIRED_APIS=(
+    # Existing APIs
     "cloudresourcemanager.googleapis.com"
     "cloudbilling.googleapis.com"
     "iam.googleapis.com"
@@ -104,6 +109,11 @@ REQUIRED_APIS=(
     "logging.googleapis.com"
     "clouderrorreporting.googleapis.com"
     "iap.googleapis.com"
+    # Additional APIs for comprehensive logging
+    "cloudtrace.googleapis.com"         # For trace data
+    "stackdriver.googleapis.com"        # For legacy Stackdriver features
+    "opsconfigmonitoring.googleapis.com" # For Ops Agent configuration
+    "cloudprofiler.googleapis.com"      # For performance profiling
 )
 
 for API in "${REQUIRED_APIS[@]}"; do

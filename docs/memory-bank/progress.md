@@ -44,8 +44,17 @@
    - [ ] Test simplified bucket IAM permissions
 
 2. **Archive Node Deployment & Logging Validation**
-   - [ ] Deploy a zcash archive node
+   - [x] Deploy a zcash archive node (Terraform code now successfully launches an archivenode instance in GCP)
+   - [x] VPC network race condition resolved (explicit depends_on and resource references added)
    - [ ] Verify logs are visible in Stackdriver (via Google Ops Agent)
+   - [ ] Investigate why log output does not appear in the GCP console (Cloud Logging)
+     - **Troubleshooting Plan (saved for next session):**
+       1. Confirm Ops Agent is installed and running on the instance.
+       2. Check service account permissions (roles/logging.logWriter).
+       3. Review Ops Agent configuration for log collection.
+       4. Check startup script for errors.
+       5. Inspect instance metadata for restrictions.
+       6. Check Cloud Logging UI for correct project/log group/filters.
 
 ### High Priority
 1. **Documentation**
@@ -85,7 +94,7 @@
 ### Project State
 - **Phase**: Initial Implementation
 - **Stage**: Core Features Complete
-- **Focus**: Bootstrap Script Testing
+- **Focus**: Archive Node Logging Validation (GCP logging output troubleshooting)
 
 ### Module Status
 1. **Zcashd Modules**
@@ -127,7 +136,7 @@ Testing:          [----------]   0%
 ### Infrastructure
 1. **Deployment**
    - Initial deployment time could be optimized
-   - Resource provisioning sequence needs refinement
+   - Resource provisioning sequence needs refinement (VPC race condition resolved)
    - State management needs documentation
    - Bootstrap script requires testing
 
