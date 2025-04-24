@@ -47,6 +47,10 @@ variable "params_disk_name" {
   description = "name of disk for persisting the Zcash parameters"
 }
 
+variable "subnetwork" {
+  type        = string
+  description = "The self_link of the subnetwork to use for internal addresses"
+}
 variable "data_disk_name" {
   type = string
   description = "name of disk for persisting the Zcash blockchain"
@@ -70,4 +74,9 @@ variable instance_type {
 variable "boot_disk_size" { 
   type = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
+}
+
+variable "os_image" {
+  type        = string
+  description = "The GCP image to use for VM boot disks"
 }

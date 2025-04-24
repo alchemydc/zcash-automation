@@ -6,6 +6,7 @@ resource "google_compute_address" "zebrad_archivenode" {
 resource "google_compute_address" "zebrad_archivenode_internal" {
   name         = "zebrad-archivenode-internal-address"
   address_type = "INTERNAL"
+  subnetwork   = var.subnetwork
   purpose      = "GCE_ENDPOINT"
 }
 
@@ -35,7 +36,7 @@ resource "google_compute_instance" "archivenode" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-10"
+      image = var.os_image
       size = var.boot_disk_size
     }
   }

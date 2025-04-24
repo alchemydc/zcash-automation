@@ -15,7 +15,7 @@ variable instance_types {
   type        = map(string)
 
   default = {
-    zcashd-archivenode         = "n1-standard-2"
+    zcashd-archivenode         = "e2-standard-4"
     zcashd-fullnode            = "n1-standard-2"
     zcashd-privatenode         = "n1-standard-2"
     zebrad-archivenode         = "n1-standard-2"
@@ -88,4 +88,10 @@ variable "boot_disk_size" {
   type = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
   default = 10
+}
+
+variable "os_image" {
+  type        = string
+  description = "The GCP image to use for VM boot disks"
+  default     = "debian-cloud/debian-12"
 }

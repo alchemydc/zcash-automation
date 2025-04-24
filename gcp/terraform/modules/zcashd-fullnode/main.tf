@@ -6,6 +6,7 @@ resource "google_compute_address" "fullnode" {
 resource "google_compute_address" "fullnode_internal" {
   name         = "fullnode-internal-address"
   address_type = "INTERNAL"
+  subnetwork   = var.subnetwork
   purpose      = "GCE_ENDPOINT"
 }
 
@@ -36,7 +37,7 @@ resource "google_compute_instance" "fullnode" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-10"
+      image = var.os_image
       size = var.boot_disk_size
     }
   }

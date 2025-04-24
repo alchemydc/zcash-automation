@@ -100,6 +100,8 @@ module "zcashd-fullnode" {
   fullnode_count                 = var.replicas["zcashd-fullnode"]
   instance_type                  = var.instance_types["zcashd-fullnode"]
   boot_disk_size                 = var.boot_disk_size
+  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                       = var.os_image
 }
 
 module "zcashd-privatenode" {
@@ -117,6 +119,8 @@ module "zcashd-privatenode" {
   privatenode_count              = var.replicas["zcashd-privatenode"]
   instance_type                  = var.instance_types["zcashd-privatenode"]
   boot_disk_size                 = var.boot_disk_size
+  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                       = var.os_image
 }
 
 module "zcashd-archivenode" {
@@ -133,6 +137,8 @@ module "zcashd-archivenode" {
   archivenode_count              = var.replicas["zcashd-archivenode"]
   instance_type                  = var.instance_types["zcashd-archivenode"]
   boot_disk_size                 = var.boot_disk_size
+  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                       = var.os_image
 }
 
 module "zebradd-archivenode" {
@@ -149,11 +155,15 @@ module "zebradd-archivenode" {
   archivenode_count              = var.replicas["zebrad-archivenode"]
   instance_type                  = var.instance_types["zebrad-archivenode"]
   boot_disk_size                 = var.boot_disk_size
+  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                       = var.os_image
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {
   name = "${var.project}-chaindata"
   location = "US"
+
+  uniform_bucket_level_access = true
 
   lifecycle_rule {
     condition {
@@ -194,6 +204,8 @@ resource "google_storage_bucket_iam_binding" "chaindata_binding_read" {
 resource "google_storage_bucket" "chaindata_rsync_bucket" {
   name = "${var.project}-chaindata-rsync"
   location = "US"
+
+  uniform_bucket_level_access = true
 
 }
 

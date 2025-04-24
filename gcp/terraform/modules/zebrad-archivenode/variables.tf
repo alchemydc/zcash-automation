@@ -72,3 +72,13 @@ variable "enable_cron_backups" {
   type        = bool
   default     = false
 }
+
+variable "subnetwork" {
+  type        = string
+  description = "The self_link of the subnetwork to use for internal addresses"
+}
+
+variable "os_image" {
+  type        = string
+  description = "The GCP image to use for VM boot disks"
+}
