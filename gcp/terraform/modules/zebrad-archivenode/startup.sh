@@ -350,10 +350,8 @@ initial_testnet_peers = [
 listen_addr = '0.0.0.0:8233'
 network = 'Mainnet'
 peerset_initial_target_size = 50
+crawl_new_peer_interval = "1m 1s"
 
-[network.crawl_new_peer_interval]
-nanos = 0
-secs = 60
 
 [state]
 cache_dir = '/home/zebra/.cache/zebra'
