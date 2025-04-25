@@ -58,67 +58,91 @@ echo "Linking new gcloud project to billing account"
 gcloud billing projects link ${TF_VAR_project} \
     --billing-account ${TF_VAR_billing_account}
 
-echo "Creating iam service account for terraform"
+echo "Creating IAM service account for terraform"
 gcloud iam service-accounts create terraform \
     --display-name "Terraform admin account"
 
-echo "Sleeping to wait for service account to propagate"
-sleep 90
 
-echo "Generating short-lived access token for terraform"
-gcloud auth print-access-token --impersonate-service-account terraform@${TF_VAR_project}.iam.gserviceaccount.com --format=json
+echo "Waiting for service account to propagate and generating short lived (impersonated) access token..."
+start_time=$(date +%s)
+max_wait=180  # 3 minutes in seconds
+retry_interval=10
+
+while true; do
+    if gcloud auth print-access-token --impersonate-service-account "terraform@${TF_VAR_project}.iam.gserviceaccount.com"  >/dev/null 2>&1; then
+        echo "Successfully generated access token"
+        break
+    fi
+
+    current_time=$(date +%s)
+    elapsed=$((current_time - start_time))
+    
+    if [ $elapsed -ge $max_wait ]; then
+        echo "Error: Failed to generate access token after ${max_wait} seconds"
+        exit 1
+    fi
+
+    echo "Waiting for service account to be ready... (${elapsed}s elapsed)"
+    sleep $retry_interval
+done
 
 # setup gcloud.env to auto-refresh creds
 echo "Configuring gcloud.env to get a new short lived access token when sourced"
-echo "export TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT=terraform@${TF_VAR_project}.iam.gserviceaccount.com" >> gcloud.env
 echo 'export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token --impersonate-service-account terraform@${TF_VAR_project}.iam.gserviceaccount.com)' >> gcloud.env
 
-echo "Granting required roles to terraform service account"
-# storage.admin is required to write to the tfstate bucket [fixme]
-# logging.configWriter is required to write to stackdriver
-# editor is required to create and manage resources
-# monitoring.admin is required to create and manage monitoring resources
+echo "Granting required roles to terraform service account (infra/admin roles)"
+echo "Terraform service account: ${TERRAFORM_SA}"
 TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT="terraform@${TF_VAR_project}.iam.gserviceaccount.com"
 TERRAFORM_SA=${TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT}
-ROLES=(
+TERRAFORM_ROLES=(
+    "roles/editor"
     "roles/storage.admin"
-    "roles/logging.logWriter"           # Allows writing logs
-    "roles/logging.configWriter"        # Allows configuring log sinks and exports
-    "roles/monitoring.metricWriter"     # Allows writing metrics
-    "roles/monitoring.admin"            # Allows managing monitoring
-    "roles/editor"                      # General resource management
-    "roles/cloudtrace.agent"           # Allows writing trace data
-    "roles/errorreporting.writer"      # Allows writing to Error Reporting
+    "roles/iam.serviceAccountUser"
+    "roles/logging.configWriter"
+    "roles/monitoring.admin"
 )
 
-for ROLE in "${ROLES[@]}"; do
+for ROLE in "${TERRAFORM_ROLES[@]}"; do
     gcloud projects add-iam-policy-binding ${TF_VAR_project} \
         --member "serviceAccount:${TERRAFORM_SA}" \
         --role ${ROLE}
 done
 
-echo "Enabling required gcp API's for terraform"
+echo "Enabling required gcp API's"
 REQUIRED_APIS=(
-    # Existing APIs
+    "compute.googleapis.com"
     "cloudresourcemanager.googleapis.com"
     "cloudbilling.googleapis.com"
     "iam.googleapis.com"
-    "compute.googleapis.com"
     "serviceusage.googleapis.com"
     "monitoring.googleapis.com"
     "logging.googleapis.com"
     "clouderrorreporting.googleapis.com"
     "iap.googleapis.com"
-    # Additional APIs for comprehensive logging
-    "cloudtrace.googleapis.com"         # For trace data
-    "stackdriver.googleapis.com"        # For legacy Stackdriver features
-    "opsconfigmonitoring.googleapis.com" # For Ops Agent configuration
-    "cloudprofiler.googleapis.com"      # For performance profiling
 )
 
 for API in "${REQUIRED_APIS[@]}"; do
     gcloud services enable ${API}
 done
+
+# add the project specific default compute service account to gcloud.env
+echo "adding the default compute service account to gcloud.env"
+PROJECT_NUMBER=$(gcloud projects describe "${TF_VAR_project}" --format="value(projectNumber)")
+DEFAULT_COMPUTE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+echo "export TF_VAR_GCP_DEFAULT_SERVICE_ACCOUNT=$DEFAULT_COMPUTE_SA" >> gcloud.env
+echo "Granting required roles to default Compute Engine service account (runtime/logging/monitoring roles)"
+COMPUTE_ROLES=(
+    "roles/logging.logWriter"
+    "roles/monitoring.metricWriter"
+)
+
+for ROLE in "${COMPUTE_ROLES[@]}"; do
+    gcloud projects add-iam-policy-binding ${TF_VAR_project} \
+        --member "serviceAccount:${DEFAULT_COMPUTE_SA}" \
+        --role ${ROLE}
+done
+echo "Default Compute Engine service account: ${DEFAULT_COMPUTE_SA}"
 
 # Create and configure state bucket
 echo "Creating and configuring terraform state bucket..."

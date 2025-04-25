@@ -46,15 +46,9 @@
 2. **Archive Node Deployment & Logging Validation**
    - [x] Deploy a zcash archive node (Terraform code now successfully launches an archivenode instance in GCP)
    - [x] VPC network race condition resolved (explicit depends_on and resource references added)
-   - [ ] Verify logs are visible in Stackdriver (via Google Ops Agent)
-   - [ ] Investigate why log output does not appear in the GCP console (Cloud Logging)
-     - **Troubleshooting Plan (saved for next session):**
-       1. Confirm Ops Agent is installed and running on the instance.
-       2. Check service account permissions (roles/logging.logWriter).
-       3. Review Ops Agent configuration for log collection.
-       4. Check startup script for errors.
-       5. Inspect instance metadata for restrictions.
-       6. Check Cloud Logging UI for correct project/log group/filters.
+   - [x] Verify logs are visible in Stackdriver/GCP Log Viewer (via Google Ops Agent)
+   - [x] Investigate why log output does not appear in the GCP console (Cloud Logging) — Resolved: order-of-operations and IAM role assignment fixed in bootstrap.sh
+   - [ ] Fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh` (next priority)
 
 ### High Priority
 1. **Documentation**
@@ -176,6 +170,7 @@ Testing:          [----------]   0%
    - Structured logging format
    - Added `enable_cron_backups` variable (default: false) for archive node modules
    - Startup scripts now use Google Ops Agent for logging/monitoring, replacing Stackdriver and Fluentd agents
+   - Fixed order-of-operations and IAM role assignment in bootstrap.sh; startup script logs now visible in GCP console
 
 ### Future Considerations
 1. **Short Term**
