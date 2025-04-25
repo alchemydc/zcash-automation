@@ -81,3 +81,8 @@ variable "os_image" {
   type        = string
   description = "The GCP image to use for VM boot disks"
 }
+
+variable "zebra_release_tag" {
+  description = "The git tag or release to use when building Zebra"
+  type        = string
+}

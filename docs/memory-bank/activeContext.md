@@ -49,27 +49,39 @@
 - **Fixed order-of-operations and IAM role assignment in bootstrap.sh; startup script logs now visible in GCP console**
 - **Persistent disk sizing is now managed by a global `data_disk_size` variable at the project level (default 300G), passed to all node modules**
 
+### Zebra Archivenode Module Modernization
+- `zebrad-archivenode/startup.sh` updated to use Google Ops Agent, remove deprecated logging/rsyslog/logrotate config, and use a consistent log() function.
+- Zebra build command in `startup.sh` updated to use a variable for the release tag and include `--release --features prometheus --bin zebrad`.
+- `zebracargo` disk resource in `zebrad-archivenode/main.tf` renamed to `zebraparams`.
+- `machine_type` variable reference in `zebrad-archivenode/main.tf` corrected.
+- Global `zebra_release_tag` variable implemented and passed to the module.
+
 ## Next Steps
 
 ### Immediate Priority
-1. **Startup Script Error Fixes**
+1. **Test Zebrad Archivenode Deployment**
+   - Deploy a zebrad-archivenode instance using the updated module.
+   - Verify startup script execution and logging in GCP Log Viewer.
+   - Confirm Zebra builds and starts successfully.
+
+2. **Startup Script Error Fixes**
    - Review and fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh`
    - Validate correct execution and logging after fixes
    - Zcashd archivenode now starts and syncs after GPG/repo fixes
 
-2. **Persistent Disk Sizing Refactor**
+3. **Persistent Disk Sizing Refactor**
    - `data_disk_size` is now a global project-level variable (default 300G)
    - All node modules require it from the root module
    - Refactor complete
 
-3. **Bootstrap Script Testing**
+4. **Bootstrap Script Testing**
    - Test environment preparation
    - Validation of new API enablement
    - Verification of IAM role assignments
    - State bucket configuration testing
    - Service account setup validation
 
-4. **Archive Node Deployment & Logging Validation**
+5. **Archive Node Deployment & Logging Validation**
    - Deploy a zcash archive node ✓ (Terraform code now successfully launches an archivenode instance in GCP)
    - VPC network race condition resolved (explicit depends_on and resource references added)
    - Verify logs are visible in Stackdriver (via Google Ops Agent)

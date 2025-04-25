@@ -148,7 +148,7 @@ module "zcashd-archivenode" {
   depends_on                     = [google_compute_network.zcash_network]
 }
 
-module "zebradd-archivenode" {
+module "zebrad-archivenode" {
   source = "./modules/zebrad-archivenode"
   # variables
   project                        = var.project
@@ -159,6 +159,7 @@ module "zebradd-archivenode" {
   params_disk_name               = var.zebra_params_disk_name  #"zebra-cargo"  
   data_disk_name                 = var.zebra_data_disk_name    #"zebra-data" 
   data_disk_size                 = var.data_disk_size
+  zebra_release_tag              = var.zebra_release_tag
   GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
   archivenode_count              = var.replicas["zebrad-archivenode"]
   instance_type                  = var.instance_types["zebrad-archivenode"]

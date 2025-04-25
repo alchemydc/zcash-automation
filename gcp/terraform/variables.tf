@@ -6,7 +6,7 @@ variable replicas {
     zcashd-archivenode         = 1
     zcashd-fullnode            = 0
     zcashd-privatenode         = 0 
-    zebrad-archivenode         = 0 
+    zebrad-archivenode         = 1
   }
 }
 
@@ -18,7 +18,7 @@ variable instance_types {
     zcashd-archivenode         = "e2-standard-4"
     zcashd-fullnode            = "n1-standard-2"
     zcashd-privatenode         = "n1-standard-2"
-    zebrad-archivenode         = "n1-standard-2"
+    zebrad-archivenode         = "e2-standard-4"
   }
 }
 
@@ -100,4 +100,10 @@ variable "os_image" {
   type        = string
   description = "The GCP image to use for VM boot disks"
   default     = "debian-cloud/debian-12"
+}
+
+variable "zebra_release_tag" {
+  description = "The git tag or release to use when building Zebra"
+  type        = string
+  default     = "v2.2.0"
 }

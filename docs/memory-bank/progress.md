@@ -30,10 +30,21 @@
    - ✓ Structured logging format
    - ✓ Updated documentation with new role requirements
 
+### Zebra Archivenode Module Modernization
+- ✓ `zebrad-archivenode/startup.sh` updated (Google Ops Agent, logging, log() function, variable release tag, build flags).
+- ✓ `zebracargo` disk resource in `zebrad-archivenode/main.tf` renamed to `zebraparams`.
+- ✓ `machine_type` variable reference in `zebrad-archivenode/main.tf` corrected.
+- ✓ Global `zebra_release_tag` variable implemented and passed to the module.
+
 ## What's Left to Build
 
 ### Immediate Priority
-1. **Bootstrap Script Testing**
+1. **Test Zebrad Archivenode Deployment**
+   - [ ] Deploy a zebrad-archivenode instance using the updated module.
+   - [ ] Verify startup script execution and logging in GCP Log Viewer.
+   - [ ] Confirm Zebra builds and starts successfully.
+
+2. **Bootstrap Script Testing**
    - [ ] Test environment setup
    - [ ] API enablement verification
    - [ ] IAM role assignment validation
@@ -43,7 +54,7 @@
    - [ ] Validate short-lived token implementation
    - [ ] Test simplified bucket IAM permissions
 
-2. **Archive Node Deployment & Logging Validation**
+3. **Archive Node Deployment & Logging Validation**
    - [x] Deploy a zcash archive node (Terraform code now successfully launches an archivenode instance in GCP)
    - [x] VPC network race condition resolved (explicit depends_on and resource references added)
    - [x] Verify logs are visible in Stackdriver/GCP Log Viewer (via Google Ops Agent)

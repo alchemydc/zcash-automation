@@ -17,17 +17,16 @@ resource "google_compute_disk" "zebradata" {
   count = var.archivenode_count
 }
 
-resource "google_compute_disk" "zebracargo" {
+resource "google_compute_disk" "zebraparams" {
   name = var.params_disk_name
-  type = "pd-ssd"
+  type = "pd-standard"
   size = 5
   count = var.archivenode_count
 }
 
 resource "google_compute_instance" "archivenode" {
   name = "zebra-archivenode"
-  machine_type = "n1-standard-2"   # FIXME: parameterize this :)
-  #machine_type = var.instance_types["zebrad_archivenode"]
+  machine_type = var.instance_type
   depends_on = [google_compute_disk.zebradata]
 
   count = var.archivenode_count
@@ -67,7 +66,8 @@ resource "google_compute_instance" "archivenode" {
       gcloud_region  : var.region,
       gcloud_zone    : var.zone,
       external_ip_address : google_compute_address.zebrad_archivenode.address,
-      enable_cron_backups : var.enable_cron_backups
+      enable_cron_backups : var.enable_cron_backups,
+      zebra_release_tag : var.zebra_release_tag
     }
   )
 

@@ -1,99 +1,48 @@
 #!/bin/bash
+set -euo pipefail
 set -x
 
-# Injected by Terraform
-
-apt update && apt install -y screen htop nftables pigz clang libclang1 libclang-dev build-essential llvm 
-
-# ---- Configure logrotate ----
-echo "Configuring logrotate" | logger
-cat <<'EOF' > '/etc/logrotate.d/rsyslog'
-/var/log/syslog
-/var/log/mail.info
-/var/log/mail.warn
-/var/log/mail.err
-/var/log/mail.log
-/var/log/daemon.log
-/var/log/kern.log
-/var/log/auth.log
-/var/log/user.log
-/var/log/lpr.log
-/var/log/cron.log
-/var/log/debug
-/var/log/messages
-{
-        rotate 3
-        daily
-        missingok
-        notifempty
-        delaycompress
-        compress
-        sharedscripts
-        postrotate
-                #invoke-rc.d rsyslog rotate > /dev/null   # does not work on debian10
-                kill -HUP `pidof rsyslogd`
-        endscript
+# Add a logging function
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
 }
-EOF
 
-# zcashd -printtoconsole emits ANSI colors in logs, which won't render properly without this
-echo '$EscapeControlCharactersOnReceive off' >> /etc/rsyslog.conf
+log "Starting zebra node initialization"
 
-# ---- Restart rsyslogd
-echo "Restarting rsyslogd"
-systemctl restart rsyslog
-
+apt update && apt install -y screen htop nftables pigz clang libclang1 libclang-dev build-essential llvm
 
 # ---- Useful aliases ----
-echo "Configuring aliases" | logger
+log "Configuring aliases"
 echo "alias ll='ls -laF'" >> /etc/skel/.bashrc
 echo "alias ll='ls -laF'" >> /root/.bashrc
 
+# ---- Install Google Ops Agent ----
+log "Installing Google Ops Agent"
+curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+bash add-google-cloud-ops-agent-repo.sh --also-install
 
-# ---- Install Stackdriver Agent
-echo "Installing Stackdriver agent" | logger
-curl -sSO https://dl.google.com/cloudagents/add-monitoring-agent-repo.sh
-bash add-monitoring-agent-repo.sh
-apt update -y
-apt install -y stackdriver-agent
-systemctl restart stackdriver-agent
-
-# ---- Install Fluent Log Collector
-echo "Installing google fluent log collector agent" | logger
-curl -sSO https://dl.google.com/cloudagents/add-logging-agent-repo.sh
-bash add-logging-agent-repo.sh
-apt update -y
-apt install -y google-fluentd
-apt install -y google-fluentd-catch-all-config-structured
-systemctl restart google-fluentd
-
-# add zcash user
+# add zebra user
 useradd -m zebra -s /bin/bash
 
 # ---- Set Up Persistent Disk for .zebra dir ----
-
-# gives a path similar to `/dev/sdb`
 DISK_PATH=$(readlink -f /dev/disk/by-id/google-${data_disk_name})
 DATA_DIR=/home/zebra/.cache
 
-echo "Setting up persistent disk ${data_disk_name} at $DISK_PATH..."
+log "Setting up persistent disk ${data_disk_name} at $DISK_PATH..."
 
 DISK_FORMAT=ext4
 CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
 
-echo "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
+log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
 
-# If the disk has already been formatted previously (this will happen
-# if this instance has been recreated with the same disk), we skip formatting
 if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  echo "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
+  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
 else
-  echo "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
+  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
   mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
 fi
 
-# Mounting the volume
-echo "Mounting $DISK_PATH onto $DATA_DIR"
+log "Mounting $DISK_PATH onto $DATA_DIR"
 mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
@@ -101,29 +50,24 @@ mount $DATA_DIR
 chown -R zebra:zebra $DATA_DIR
 
 # ---- Set Up Persistent Disk for .cargo dir ----
-
-# gives a path similar to `/dev/sdb`
 DISK_PATH=$(readlink -f /dev/disk/by-id/google-${params_disk_name})
 DATA_DIR=/home/zebra/.cargo
 
-echo "Setting up persistent disk ${params_disk_name} at $DISK_PATH..."
+log "Setting up persistent disk ${params_disk_name} at $DISK_PATH..."
 
 DISK_FORMAT=ext4
 CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
 
-echo "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
+log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
 
-# If the disk has already been formatted previously (this will happen
-# if this instance has been recreated with the same disk), we skip formatting
 if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  echo "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
+  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
 else
-  echo "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
+  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
   mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
 fi
 
-# Mounting the volume
-echo "Mounting $DISK_PATH onto $DATA_DIR"
+log "Mounting $DISK_PATH onto $DATA_DIR"
 mkdir -p $DATA_DIR
 DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
 echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
@@ -131,7 +75,7 @@ mount $DATA_DIR
 chown -R zebra:zebra $DATA_DIR
 
 # ---- Setup swap
-echo "Setting up swapfile" | logger
+log "Setting up swapfile"
 fallocate -l 1G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile
@@ -139,7 +83,7 @@ swapon /swapfile
 swapon -s
 
 # ---- Config /etc/screenrc ----
-echo "Configuring /etc/screenrc" | logger
+log "Configuring /etc/screenrc"
 cat <<'EOF' >> '/etc/screenrc'
 bindkey -k k1 select 1  #  F1 = screen 1
 bindkey -k k2 select 2  #  F2 = screen 2
@@ -155,29 +99,25 @@ bindkey -k F2 next      # F12 = next
 EOF
 
 # ---- Create backup script
-echo "Creating chaindata backup script" | logger
+log "Creating chaindata backup script"
 cat <<'EOF' > /root/backup.sh
 #!/bin/bash
-# This script stops zebrad, tars up the chaindata (with gzip compression), and copies it to GCS.
-# The 'chaindata' GCS bucket has versioning enabled, so if a corrupted tarball is uploaded, an older version can be selected for restore.
-# This takes quit some time, and takes quite a bit of local disk.
-# The rsync variant (below) is more efficient, but tarballs are more portable.
 set -x
 
-echo "Starting chaindata backup" | logger
-echo "Stopping zebrad" | logger
+log "Starting chaindata backup"
+log "Stopping zebrad"
 systemctl stop zebrad.service
 sleep 5
-echo "Tarring up chainstate and blocks" | logger
+log "Tarring up chainstate and blocks"
 mkdir /home/zebra/.cache/backup
 tar -I "pigz --fast" --exclude='IDENTITY' -C /home/zebra/.cache -cvf /home/zebra/.cache/backup/zebra_chaindata.tgz zebra
-echo "copying tarball to GCS" | logger
+log "copying tarball to GCS"
 gsutil cp /home/zebra/.cache/backup/zebra_chaindata.tgz gs://${gcloud_project}-chaindata
-echo "removing tarball from local fs" | logger
+log "removing tarball from local fs"
 rm -f /home/zebra/.cache/backup/zebra_chaindata.tgz
-echo "Chaindata backup completed" | logger
+log "Chaindata backup completed"
 sleep 3
-echo "starting zebrad" | logger
+log "starting zebrad"
 systemctl start zebrad.service
 EOF
 chmod u+x /root/backup.sh
@@ -185,164 +125,160 @@ chmod u+x /root/backup.sh
 # ----- Create snapshot script
 cat <<EOF > /root/backup_snapshot.sh
 #!/bin/bash
-# This script stops zebrad, deletes snapshots from GCS, and then snapshots the
-# disk containing the Zebra cargo dir, as well as the disk containing the Zcash blockchain
-# and supporting data.
-
 set -x
-echo "Deleting snapshots" | logger
+log "Deleting snapshots"
 echo 'y' | gcloud compute snapshots delete ${data_disk_name}-snapshot-latest 
 echo 'y' | gcloud compute snapshots delete ${params_disk_name}-snapshot-latest
-echo "Taking snapshot of Zebra cargo disk" | logger
+log "Taking snapshot of Zebra cargo disk"
 gcloud compute disks snapshot ${params_disk_name} --snapshot-names=${params_disk_name}-snapshot-latest --zone=${gcloud_zone}
-echo "Stopping zebrad"
+log "Stopping zebrad"
 systemctl stop zebrad
 sleep 5
-echo "Taking snapshot of Zebrad data disk" | logger
+log "Taking snapshot of Zebrad data disk"
 gcloud compute disks snapshot ${data_disk_name} --snapshot-names=${data_disk_name}-snapshot-latest --zone=${gcloud_zone}
 sleep 3
-echo "starting zebrad" | logger
+log "starting zebrad"
 systemctl start zebrad.service
 EOF
 chmod u+x /root/backup_snapshot.sh
 
 # ---- Create rsync backup script
-echo "Creating rsync chaindata backup script" | logger
+log "Creating rsync chaindata backup script"
 cat <<'EOF' > /root/backup_rsync.sh
 #!/bin/bash
-# This script stops zebrad, and uses rsync to copy chaindata to GCS.
 set -x
 
-echo "Starting rsync chaindata backup" | logger
-echo "Stopping zebrad" | logger
+log "Starting rsync chaindata backup"
+log "Stopping zebrad"
 systemctl stop zebrad.service
 sleep 5
-echo "rsyncing Zebra state to GCS" | logger
+log "rsyncing Zebra state to GCS"
 gsutil -m rsync -d -r /home/zebra/.cache/zebra gs://${gcloud_project}-chaindata-rsync/zebra
-echo "rsync chaindata backup completed" | logger
+log "rsync chaindata backup completed"
 sleep 3
-echo "starting zebrad" | logger
+log "starting zebrad"
 systemctl start zebrad.service
 EOF
 chmod u+x /root/backup_rsync.sh
 
 # ---- Add backups to cron
-
 if [ "${enable_cron_backups}" = "true" ]; then
 cat <<'EOF' > /root/backup.crontab
 # m h  dom mon dow   command
-# backup full tarball once a week at 00:57 on Sunday
 57 0 * * 0 /root/backup.sh | logger
-
-# backup via rsync once a day at 00:17 past the hour
 17 0 * * * /root/backup_rsync.sh | logger
-
-# backup via snapshot once a day at 04:20 past the hour
-# note that snapshot backup is the only method enabled by default, because it's by far the fastest.
 20 04 * * * /root/backup_snapshot.sh | logger
 EOF
 /usr/bin/crontab /root/backup.crontab
 fi
 
 # ---- Create restore script
-echo "Creating chaindata restore script" | logger
+log "Creating chaindata restore script"
 cat <<'EOF' > /root/restore.sh
 #!/bin/bash
 set -x
 
-# test to see if chaindata exists in bucket
 gsutil -q stat gs://${gcloud_project}-chaindata/zebra_chaindata.tgz
 if [ $? -eq 0 ]
 then
-  #chaindata exists in bucket
   mkdir -p /home/zebra/.cache
   mkdir -p /home/zebra/.cache/restore
-  echo "downloading chaindata from gs://${gcloud_project}-chaindata/zebra_chaindata.tgz" | logger
+  log "downloading chaindata from gs://${gcloud_project}-chaindata/zebra_chaindata.tgz"
   gsutil cp gs://${gcloud_project}-chaindata/zebra_chaindata.tgz /home/zebra/.cache/restore/zebra_chaindata.tgz
-  echo "stopping zebrad to untar chaindata" | logger
+  log "stopping zebrad to untar chaindata"
   systemctl stop zebrad.service
   sleep 3
-  echo "Deleting old chaindata" | logger
+  log "Deleting old chaindata"
   rm -rf /home/zebra/.cache/*
-  echo "untarring chaindata" | logger
+  log "untarring chaindata"
   tar xvf /home/zebra/.cache/restore/zebra_chaindata.tgz -I pigz --directory /home/zebra/.cache
-  echo "Setting perms on chaindata" | logger
+  log "Setting perms on chaindata"
   chown -R zebra:zebra /home/zebra/.cache
-  echo "removing chaindata tarball" | logger
+  log "removing chaindata tarball"
   rm -rf /home/zebra/.cache/restore/zebra_chaindata.tgz
   sleep 3
-  echo "starting zebrad" | logger
+  log "starting zebrad"
   systemctl start zebrad.service
   else
-    echo "No zebra_chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore" | logger
-    echo "Starting zebrad" | logger
+    log "No zebra_chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore"
+    log "Starting zebrad"
     systemctl start zebrad
   fi
 EOF
 chmod u+x /root/restore.sh
 
 # ---- Create rsync restore script
-echo "Creating rsync chaindata restore script" | logger
+log "Creating rsync chaindata restore script"
 cat <<'EOF' > /root/restore_rsync.sh
 #!/bin/bash
 set -x
 
-# test to see if chaindata exists in the rsync chaindata bucket
 gsutil -q stat gs://${gcloud_project}-chaindata-rsync/zebra
 if [ $? -eq 0 ]
 then
-  #chaindata exists in bucket
-  echo "stopping zebrad" | logger
+  log "stopping zebrad"
   systemctl stop zebrad.service
-  echo "downloading Zebra state via rsync from gs://${gcloud_project}-chaindata-rsync/zebra" | logger
+  log "downloading Zebra state via rsync from gs://${gcloud_project}-chaindata-rsync/zebra"
   mkdir -p /home/zebra/.cache/zebra
   gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/zebra /home/zebra/.cache/zebra
-  echo "Setting perms on state" | logger
+  log "Setting perms on state"
   chown -R zebra:zebra /home/zebra/.cache
-  echo "starting zebrad" | logger
+  log "starting zebrad"
   sleep 3
   systemctl start zebrad.service
   else
-    echo "No chaindata found in bucket gs://${gcloud_project}-chaindata-rsync, aborting warp restore" | logger
+    log "No chaindata found in bucket gs://${gcloud_project}-chaindata-rsync, aborting warp restore"
   fi
 EOF
 chmod u+x /root/restore_rsync.sh
 
-echo "Configuring firewall rules" | logger
+log "Configuring firewall rules"
  tee <<EOF >/dev/null /etc/nftables.conf
 #!/usr/sbin/nft -f
 flush ruleset
 table inet filter {
         chain input {
                 type filter hook input priority 0;
-                # accept any localhost traffic
                 iif lo accept
-                # accept traffic originated from us
                 ct state established,related accept
-                # activate the following line to accept common local services
-                # tcp/22 == sshd, tcp/8233 == zcashd
                 tcp dport { 22, 8233 } ct state new accept
-                # count and drop any other traffic
                 counter drop
         }
 }
 EOF
 
-echo "Enabling host nftables firewall" | logger
+log "Enabling host nftables firewall"
 systemctl enable nftables.service
 systemctl start nftables.service
 
-echo "Creating Zebra install script in /home/zebra" | logger
+log "Creating Zebra install script in /home/zebra"
 tee << 'EOF' > /dev/null /home/zebra/install_zebra.sh
 #!/bin/bash
 set -x
+echo "Installing rust"
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+echo "Adding rust to path"
 . /home/zebra/.cargo/env
-cargo install --locked --git https://github.com/ZcashFoundation/zebra --tag v1.0.0-alpha.13 zebrad
+# Rust/Cargo optimized build flags for production
+echo "Building zebrad with optimizations"
+export RUSTFLAGS="-C target-cpu=native -C codegen-units=1 -C opt-level=3"
+export CARGO_PROFILE_RELEASE_LTO="thin"
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+
+# Install zebrad with optimizations and features
+cargo install \
+    --locked \
+    --features prometheus \
+    --git https://github.com/ZcashFoundation/zebra zebrad\
+    --tag "${zebra_release_tag}" \
+    --jobs "$(nproc)" \
+    --verbose
+echo "Generating default zebrad config"
 zebrad generate > /home/zebra/zebrad.conf
 EOF
 
-echo "Creating systemd unit for zebrad" | logger
+log "Creating systemd unit for zebrad"
 tee <<'EOF' > /dev/null /etc/systemd/system/zebrad.service
 [Unit]
 Description=Zebrad
@@ -362,17 +298,17 @@ SyslogIdentifier=zebrad
 WantedBy=multi-user.target
 EOF
 
-echo "Setting perms on zebra installer" | logger
+log "Setting perms on zebra installer"
 chown -R zebra:zebra /home/zebra
 chmod u+x /home/zebra/install_zebra.sh
-echo "Running zebra installer as zebra user" | logger
+log "Running zebra installer as zebra user"
 sudo -u zebra /home/zebra/install_zebra.sh
 
-echo "Enabling zebrad via systemd" | logger
+log "Enabling zebrad via systemd"
 systemctl daemon-reload
 systemctl enable zebrad.service
 
-echo "Creating zebrad.conf" | logger
+log "Creating zebrad.conf"
 cat << EOF > /home/zebra/zebrad.conf
 # This file can be used as a skeleton for custom configs.
 #
@@ -395,7 +331,7 @@ cat << EOF > /home/zebra/zebrad.conf
 # 3. The default config.
 
 [consensus]
-checkpoint_sync = false
+checkpoint_sync = true
 
 [metrics]
 
@@ -411,7 +347,6 @@ initial_testnet_peers = [
     'testnet.is.yolo.money:18233',
     'dnsseed.testnet.z.cash:18233',
 ]
-#listen_addr = '${external_ip_address}:8233'    # note this does NOT work presently [known issue, can't advertise addr not bound to]
 listen_addr = '0.0.0.0:8233'
 network = 'Mainnet'
 peerset_initial_target_size = 50
@@ -425,15 +360,20 @@ cache_dir = '/home/zebra/.cache/zebra'
 ephemeral = false
 
 [sync]
-lookahead_limit = 2000
-max_concurrent_block_requests = 50
+checkpoint_verify_concurrency_limit = 1000
+download_concurrency_limit = 50
+full_verify_concurrency_limit = 20
+parallel_cpu_threads = 0
 
 [tracing]
-use_color = true
-use_journald = false
+buffer_limit = 128000
+force_use_color = false
+use_color = false
+use_journald = true
 EOF
-echo "Setting perms on zebra config" | logger
+
+log "Setting perms on zebra config"
 chown -R zebra:zebra /home/zebra
 
-echo "Starting zebrad" | logger
+log "Starting zebrad"
 systemctl start zebrad
