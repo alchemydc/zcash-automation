@@ -72,6 +72,12 @@ variable "data_disk_name" {
   default = "zcashdata"
 }
 
+variable "data_disk_size" {
+  description = "Size (in GB) of the persistent data disk for all nodes"
+  type        = number
+  default     = 300
+}
+
 variable "zebra_params_disk_name" {
   type = string
   description = "name of disk for persisting the Zcash parameters"

@@ -97,6 +97,7 @@ module "zcashd-fullnode" {
   zone                           = var.zone
   params_disk_name               = var.params_disk_name
   data_disk_name                 = var.data_disk_name
+  data_disk_size                 = var.data_disk_size
   GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
   fullnode_count                 = var.replicas["zcashd-fullnode"]
   instance_type                  = var.instance_types["zcashd-fullnode"]
@@ -116,6 +117,7 @@ module "zcashd-privatenode" {
   zone                           = var.zone
   params_disk_name               = var.params_disk_name
   data_disk_name                 = var.data_disk_name
+  data_disk_size                 = var.data_disk_size
   GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
   fullnode_private_ip_address    = module.zcashd-fullnode.internal_ip_addresses
   privatenode_count              = var.replicas["zcashd-privatenode"]
@@ -136,6 +138,7 @@ module "zcashd-archivenode" {
   zone                           = var.zone
   params_disk_name               = var.params_disk_name
   data_disk_name                 = var.data_disk_name
+  data_disk_size                 = var.data_disk_size
   GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
   archivenode_count              = var.replicas["zcashd-archivenode"]
   instance_type                  = var.instance_types["zcashd-archivenode"]
@@ -155,6 +158,7 @@ module "zebradd-archivenode" {
   zone                           = var.zone
   params_disk_name               = var.zebra_params_disk_name  #"zebra-cargo"  
   data_disk_name                 = var.zebra_data_disk_name    #"zebra-data" 
+  data_disk_size                 = var.data_disk_size
   GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
   archivenode_count              = var.replicas["zebrad-archivenode"]
   instance_type                  = var.instance_types["zebrad-archivenode"]

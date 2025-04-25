@@ -47,6 +47,7 @@
 - Added `enable_cron_backups` variable (default: false) to zcashd-archivenode and zebrad-archivenode modules, with documentation in module and top-level READMEs
 - Startup scripts now use Google Ops Agent for logging/monitoring, replacing Stackdriver and Fluentd agents
 - **Fixed order-of-operations and IAM role assignment in bootstrap.sh; startup script logs now visible in GCP console**
+- **Persistent disk sizing is now managed by a global `data_disk_size` variable at the project level (default 300G), passed to all node modules**
 
 ## Next Steps
 
@@ -57,8 +58,9 @@
    - Zcashd archivenode now starts and syncs after GPG/repo fixes
 
 2. **Persistent Disk Sizing Refactor**
-   - Move `data_disk_size` to a global project-level variable in the root module
-   - Pass to all node modules for consistent disk sizing
+   - `data_disk_size` is now a global project-level variable (default 300G)
+   - All node modules require it from the root module
+   - Refactor complete
 
 3. **Bootstrap Script Testing**
    - Test environment preparation

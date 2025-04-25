@@ -39,7 +39,6 @@ variable "service_account_scopes" {
 variable "data_disk_size" {
   type = number
   description = "Size (in GB) of the disk where the parameters and chaindata reside"
-  default = 100
 }
 
 variable "params_disk_name" {
