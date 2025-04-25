@@ -54,15 +54,20 @@
 1. **Startup Script Error Fixes**
    - Review and fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh`
    - Validate correct execution and logging after fixes
+   - Zcashd archivenode now starts and syncs after GPG/repo fixes
 
-2. **Bootstrap Script Testing**
+2. **Persistent Disk Sizing Refactor**
+   - Move `data_disk_size` to a global project-level variable in the root module
+   - Pass to all node modules for consistent disk sizing
+
+3. **Bootstrap Script Testing**
    - Test environment preparation
    - Validation of new API enablement
    - Verification of IAM role assignments
    - State bucket configuration testing
    - Service account setup validation
 
-3. **Archive Node Deployment & Logging Validation**
+4. **Archive Node Deployment & Logging Validation**
    - Deploy a zcash archive node ✓ (Terraform code now successfully launches an archivenode instance in GCP)
    - VPC network race condition resolved (explicit depends_on and resource references added)
    - Verify logs are visible in Stackdriver (via Google Ops Agent)

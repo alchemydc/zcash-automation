@@ -66,6 +66,8 @@ externalip=${external_ip_address}
 testnet=0
 listen=1
 maxconnections=20
+i-am-aware-zcashd-will-be-replaced-by-zebrad-and-zallet-in-2025=1
+printtoconsole=1
 EOF
 chown -R zcash:zcash /home/zcash
 
@@ -314,13 +316,14 @@ if ! apt install -y apt-transport-https wget gnupg2; then
     exit 1
 fi
 
-# Add Electric Coin GPG key and repository with verification
-if wget -qO - https://apt.z.cash/zcash.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/zcash.gpg > /dev/null; then
-    log "Successfully added Zcash GPG key"
-else
-    log "ERROR: Failed to add Zcash GPG key"
-    exit 1
-fi
+# Import Electric Coin GPG key and configure repo
+wget -qO zcash.asc https://apt.z.cash/zcash.asc
+
+gpg --dearmor < zcash.asc | tee /etc/apt/trusted.gpg.d/zcash.gpg > /dev/null
+rm -f zcash.asc
+
+# Add the Zcash APT repository (for Debian 12/bullseye)
+echo "deb [signed-by=/etc/apt/trusted.gpg.d/zcash.gpg] https://apt.z.cash/ bullseye main" | tee /etc/apt/sources.list.d/zcash.list
 
 apt update && apt install -y zcash
 

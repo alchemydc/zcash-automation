@@ -48,7 +48,8 @@
    - [x] VPC network race condition resolved (explicit depends_on and resource references added)
    - [x] Verify logs are visible in Stackdriver/GCP Log Viewer (via Google Ops Agent)
    - [x] Investigate why log output does not appear in the GCP console (Cloud Logging) — Resolved: order-of-operations and IAM role assignment fixed in bootstrap.sh
-   - [ ] Fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh` (next priority)
+   - [x] Fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh` (archivenode now syncing after GPG/repo fixes)
+   - [ ] Refactor: Move `data_disk_size` to a global project-level variable and pass to all node modules (next priority)
 
 ### High Priority
 1. **Documentation**
