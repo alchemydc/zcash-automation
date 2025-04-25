@@ -338,13 +338,14 @@ Requires=network.target
 User=zcash
 Group=zcash
 Type=simple
-ExecStart=/usr/bin/zcashd -printtoconsole
+Environment="NO_COLOR=1"
+ExecStart=/usr/bin/zcashd
 ExecStop=/usr/bin/zcash-cli stop
 RestartSec=30
 TimeoutStartSec=300
 TimeoutStopSec=300
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=zcashd
 
 # Security hardening
