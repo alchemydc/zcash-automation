@@ -29,6 +29,7 @@
 
 ### Deployment Improvements
 - Added OpenTofu support alongside Terraform
+- **Completed first end-to-end test: successfully bootstrapped a new project using 'gcp/terraform/bootstrap.sh' and deployed both 'zcashd-archivenode' and 'zebrad-archivenode' modules with all systems working.**
 - Improved error handling in bootstrap script
 - Updated GCP environment variable documentation
 - Fixed firewall rules for public P2P connections
@@ -59,29 +60,43 @@
 ## Next Steps
 
 ### Immediate Priority
-1. **Test Zebrad Archivenode Deployment**
-   - Deploy a zebrad-archivenode instance using the updated module.
-   - Verify startup script execution and logging in GCP Log Viewer.
-   - Confirm Zebra builds and starts successfully.
 
-2. **Startup Script Error Fixes**
+1. **Zebra Log-Based Height Metric** ✓
+   - Implemented a working log-based distribution metric for Zebra node block height in GCP using Terraform.
+   - Filter:
+     ```
+     logName="projects/${var.project}/logs/syslog"
+     resource.type="gce_instance"
+     jsonPayload.message:"zebrad::components::sync::progress:"
+     jsonPayload.message:"current_height=Height("
+     ```
+   - Value extractor:
+     ```
+     REGEXP_EXTRACT(jsonPayload.message, r'current_height=Height\((\d+)\)')
+     ```
+   - Metric is general for all Zebra nodes and supports per-instance graphing.
+   - Confirmed working in Cloud Monitoring.
+
+2. **Next: Zebra Peer Count Metric**
+   - Design and implement a log-based metric to track peer count for Zebra nodes.
+
+3. **Test Zebrad Archivenode Deployment** ✓
+   - Completed: Deployed a zebrad-archivenode instance using the updated module, verified startup script execution and logging in GCP Log Viewer, and confirmed Zebra builds and starts successfully.
+
+4. **Startup Script Error Fixes**
    - Review and fix errors in `gcp/terraform/modules/zcashd-archivenode/startup.sh`
    - Validate correct execution and logging after fixes
    - Zcashd archivenode now starts and syncs after GPG/repo fixes
 
-3. **Persistent Disk Sizing Refactor**
+5. **Persistent Disk Sizing Refactor**
    - `data_disk_size` is now a global project-level variable (default 300G)
    - All node modules require it from the root module
    - Refactor complete
 
-4. **Bootstrap Script Testing**
-   - Test environment preparation
-   - Validation of new API enablement
-   - Verification of IAM role assignments
-   - State bucket configuration testing
-   - Service account setup validation
+6. **Bootstrap Script Testing** ✓
+   - Completed: Successfully bootstrapped a new project using 'gcp/terraform/bootstrap.sh' and validated all steps.
 
-5. **Archive Node Deployment & Logging Validation**
+7. **Archive Node Deployment & Logging Validation**
    - Deploy a zcash archive node ✓ (Terraform code now successfully launches an archivenode instance in GCP)
    - VPC network race condition resolved (explicit depends_on and resource references added)
    - Verify logs are visible in Stackdriver (via Google Ops Agent)

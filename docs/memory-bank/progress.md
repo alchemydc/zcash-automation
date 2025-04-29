@@ -29,6 +29,7 @@
    - ✓ Resource monitoring
    - ✓ Structured logging format
    - ✓ Updated documentation with new role requirements
+   - ✓ Log-based distribution metric for Zebra node block height (Terraform, syslog, regex on jsonPayload.message, per-instance graphing)
 
 ### Zebra Archivenode Module Modernization
 - ✓ `zebrad-archivenode/startup.sh` updated (Google Ops Agent, logging, log() function, variable release tag, build flags).
@@ -39,20 +40,23 @@
 ## What's Left to Build
 
 ### Immediate Priority
-1. **Test Zebrad Archivenode Deployment**
-   - [ ] Deploy a zebrad-archivenode instance using the updated module.
-   - [ ] Verify startup script execution and logging in GCP Log Viewer.
-   - [ ] Confirm Zebra builds and starts successfully.
+0. **Zebra Peer Count Log-Based Metric**
+   - Design and implement a log-based metric to track peer count for Zebra nodes in GCP using Terraform.
 
-2. **Bootstrap Script Testing**
-   - [ ] Test environment setup
-   - [ ] API enablement verification
-   - [ ] IAM role assignment validation
-   - [ ] State bucket configuration testing
-   - [ ] Service account setup validation
-   - [ ] Validate Debian 12 compatibility
-   - [ ] Validate short-lived token implementation
-   - [ ] Test simplified bucket IAM permissions
+1. **Test Zebrad Archivenode Deployment** ✓
+   - [x] Deployed a zebrad-archivenode instance using the updated module.
+   - [x] Verified startup script execution and logging in GCP Log Viewer.
+   - [x] Confirmed Zebra builds and starts successfully.
+
+2. **Bootstrap Script Testing** ✓
+   - [x] Test environment setup
+   - [x] API enablement verification
+   - [x] IAM role assignment validation
+   - [x] State bucket configuration testing
+   - [x] Service account setup validation
+   - [x] Validate Debian 12 compatibility
+   - [x] Validate short-lived token implementation
+   - [x] Test simplified bucket IAM permissions
 
 3. **Archive Node Deployment & Logging Validation**
    - [x] Deploy a zcash archive node (Terraform code now successfully launches an archivenode instance in GCP)
@@ -99,8 +103,8 @@
 
 ### Project State
 - **Phase**: Initial Implementation
-- **Stage**: Core Features Complete
-- **Focus**: Archive Node Logging Validation (GCP logging output troubleshooting)
+- **Stage**: End-to-End Test Complete
+- **Focus**: Successfully bootstrapped a new project and deployed both zcashd-archivenode and zebrad-archivenode modules with all systems working.
 
 ### Module Status
 1. **Zcashd Modules**
@@ -118,7 +122,7 @@
 ### Bootstrap Script Status
 ```
 Modernization:    [##########] 100%
-Testing:          [----------]   0%
+Testing:          [##########] 100%
 ```
 
 ### Documentation Status

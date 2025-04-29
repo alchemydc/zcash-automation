@@ -240,3 +240,39 @@ resource "google_storage_bucket_iam_binding" "chaindata_rsync_binding_read" {
   google_storage_bucket.chaindata_rsync_bucket
   ]
 }
+
+resource "google_logging_metric" "TF_zebra_node_height_distribution" {
+  name   = "TF_zebra_node_height_distribution"
+  filter = <<EOT
+logName="projects/${var.project}/logs/syslog"
+resource.type="gce_instance"
+jsonPayload.message=~"zebrad::components::sync::progress.*current_height=Height"
+EOT
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "DISTRIBUTION"
+    unit        = "1"
+    display_name = "TF Zebra Node Block Height Distribution"
+
+    labels {
+      key        = "instance_id"
+      value_type = "STRING"
+    }
+  }
+
+  bucket_options {
+    linear_buckets {
+      num_finite_buckets = 10
+      width              = 500000
+      offset             = 0
+    }
+  }
+
+  # Fixed regex pattern to properly extract the height number
+  value_extractor = "REGEXP_EXTRACT(jsonPayload.message, \"current_height=Height\\\\(([0-9]+)\\\\)\")"
+
+  label_extractors = {
+    instance_id = "EXTRACT(resource.labels.instance_id)"
+  }
+}
