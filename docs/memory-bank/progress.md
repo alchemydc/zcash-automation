@@ -41,6 +41,7 @@
 
 ### Immediate Priority
 0. **Zebra Peer Count Log-Based Metric**
+   - Zebra does not appear to log network peer counts, so alternative sources (such as Prometheus) will need to be considered for collecting this data.
    - Design and implement a log-based metric to track peer count for Zebra nodes in GCP using Terraform.
 
 1. **Test Zebrad Archivenode Deployment** ✓
@@ -144,6 +145,9 @@ Testing:          [##########] 100%
 ## Known Issues
 
 ### Infrastructure
+1. **Log-Based Metrics**
+   - zcashd log-based metrics do not work properly due to ANSI color codes in log output, which prevent reliable regex extraction (e.g., for block height). Attempts to disable ANSI codes (NO_COLOR, TERM=dumb) have not worked. See zcashd-archivenode startup.sh for details.
+
 1. **Deployment**
    - Initial deployment time could be optimized
    - Resource provisioning sequence needs refinement (VPC race condition resolved)
@@ -200,3 +204,4 @@ Testing:          [##########] 100%
    - Advanced features
    - Automation enhancements
    - Tool integration
+   - Evaluate managed Prometheus + Grafana (or similar) for improved Zebra sync telemetry and monitoring.

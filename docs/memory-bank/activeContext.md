@@ -103,6 +103,9 @@
    - Logging now confirmed working in GCP console
 
 ### Short Term
+- Evaluate managed Prometheus + Grafana (or similar) for improved Zebra sync telemetry and monitoring.
+- Zebra does not appear to log network peer counts, so alternative sources (such as Prometheus) will need to be considered for collecting this data.
+
 1. **Testing & Validation**
    - Comprehensive module testing
    - Deployment validation
@@ -177,6 +180,7 @@
    - Testing coverage expansion
    - Performance optimization opportunities
    - Security enhancement possibilities
+   - zcashd log-based metrics do not work properly due to ANSI color codes in log output, which prevent reliable regex extraction (e.g., for block height). Attempts to disable ANSI codes (NO_COLOR, TERM=dumb) have not worked. See zcashd-archivenode startup.sh for details.
 
 2. **Process Optimization**
    - Deployment automation

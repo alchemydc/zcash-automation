@@ -338,7 +338,9 @@ Requires=network.target
 User=zcash
 Group=zcash
 Type=simple
-Environment="NO_COLOR=1"
+# the following two lines *do not work* to get zcashd to stop emitting ANSI color codes <shrug>
+#Environment="NO_COLOR=1"
+#Environment="TERM=dumb"
 ExecStart=/usr/bin/zcashd
 ExecStop=/usr/bin/zcash-cli stop
 RestartSec=30

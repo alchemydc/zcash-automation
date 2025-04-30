@@ -276,3 +276,41 @@ EOT
     instance_id = "EXTRACT(resource.labels.instance_id)"
   }
 }
+
+# note that this does *not* presently work due to ANSI color codes in the zcashd log output
+# putting this on the back burner for now
+resource "google_logging_metric" "TF_zcashd_node_height_distribution" {
+  name   = "TF_zcashd_node_height_distribution"
+  filter = <<EOT
+logName="projects/${var.project}/logs/syslog"
+resource.type="gce_instance"
+jsonPayload.message=~".*UpdateTip.*height.*"
+EOT
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "DISTRIBUTION"
+    unit        = "1"
+    display_name = "TF Zcashd Node Block Height Distribution"
+
+    labels {
+      key        = "instance_id"
+      value_type = "STRING"
+    }
+  }
+
+  bucket_options {
+    linear_buckets {
+      num_finite_buckets = 10
+      width              = 500000
+      offset             = 0
+    }
+  }
+
+  # Updated regex to match height in zcashd logs with ANSI codes
+  value_extractor = "REGEXP_EXTRACT(jsonPayload.message, \"height.*?#033\\\\[3m#033\\\\[2m=#033\\\\[0m([0-9]+)\")"
+
+  label_extractors = {
+    instance_id = "EXTRACT(resource.labels.instance_id)"
+  }
+}
