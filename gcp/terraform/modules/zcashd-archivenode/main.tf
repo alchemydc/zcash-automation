@@ -11,6 +11,7 @@ resource "google_compute_address" "archivenode_internal" {
 }
 
 resource "google_compute_disk" "zcashdata" {
+  count = var.archivenode_count
   name = var.data_disk_name
   #type = "pd-ssd"
   type = "pd-standard"  #want SSD but running into quota issues in region :(
@@ -18,6 +19,7 @@ resource "google_compute_disk" "zcashdata" {
 }
 
 resource "google_compute_disk" "zcashparams" {
+  count = var.archivenode_count
   name = var.params_disk_name
   type = "pd-standard"
   size = 2
@@ -40,13 +42,13 @@ resource "google_compute_instance" "archivenode" {
   }
 
   attached_disk {
-    source = var.data_disk_name
-    device_name = var.data_disk_name
+    source = google_compute_disk.zcashdata[0].name
+    device_name = google_compute_disk.zcashdata[0].name
   }
 
   attached_disk {
-    source = var.params_disk_name
-    device_name = var.params_disk_name
+    source = google_compute_disk.zcashparams[0].name
+    device_name = google_compute_disk.zcashparams[0].name
   }
 
   network_interface {

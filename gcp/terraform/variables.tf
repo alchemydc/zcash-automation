@@ -3,10 +3,10 @@ variable replicas {
   type        = map(number)
 
   default = {
-    zcashd-archivenode         = 1
+    zcashd-archivenode         = 0
     zcashd-fullnode            = 0
     zcashd-privatenode         = 0 
-    zebrad-archivenode         = 1
+    zebrad-archivenode         = 0
   }
 }
 

@@ -41,13 +41,13 @@ resource "google_compute_instance" "archivenode" {
   }
 
   attached_disk {
-    source = var.data_disk_name
-    device_name = var.data_disk_name
+    source = google_compute_disk.zebradata[0].name
+    device_name = google_compute_disk.zebradata[0].name
   }
 
   attached_disk {
-    source = var.params_disk_name
-    device_name = var.params_disk_name
+    source = google_compute_disk.zebraparams[0].name
+    device_name = google_compute_disk.zebraparams[0].name
   }
 
   network_interface {
