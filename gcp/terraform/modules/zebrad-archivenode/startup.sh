@@ -290,8 +290,8 @@ Group=zebra
 ExecStart=/home/zebra/.cargo/bin/zebrad -c /home/zebra/zebrad.conf start
 Restart=on-failure
 RestartSec=30
-StandardOutput=syslog
-StandardError=syslog
+#StandardOutput=syslog
+#StandardError=syslog
 SyslogIdentifier=zebrad
 
 [Install]

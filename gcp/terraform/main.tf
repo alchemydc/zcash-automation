@@ -1,7 +1,7 @@
 provider "google" {
   project = var.project
-  region = var.region
-  zone = var.zone
+  region  = var.region
+  zone    = var.zone
 }
 
 resource "google_project_service" "compute" {
@@ -45,12 +45,12 @@ resource "google_compute_router_nat" "nat" {
 
 # Update the sshd firewall rule to allow SSH from anywhere (or restrict to your IP range)
 resource "google_compute_firewall" "sshd" {
-  name    = "sshd-firewall"
-  network = google_compute_network.zcash_network.self_link
+  name       = "sshd-firewall"
+  network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
-  target_tags   = ["fullnode", "privatenode", "archivenode"]
-  source_ranges = ["0.0.0.0/0"]  # Consider restricting this to your IP range for security
+  target_tags   = ["fullnode", "privatenode", "archivenode", "z3"]
+  source_ranges = ["0.0.0.0/0"] # Consider restricting this to your IP range for security
 
   allow {
     protocol = "tcp"
@@ -60,12 +60,12 @@ resource "google_compute_firewall" "sshd" {
 
 # Update the zcashd firewall rule to allow public P2P connections
 resource "google_compute_firewall" "zcashd" {
-  name    = "zcashd-firewall"
-  network = google_compute_network.zcash_network.self_link
+  name       = "zcashd-firewall"
+  network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["archivenode"]
-  source_ranges = ["0.0.0.0/0"]  # Allow P2P connections from anywhere
+  source_ranges = ["0.0.0.0/0"] # Allow P2P connections from anywhere
 
   allow {
     protocol = "tcp"
@@ -74,8 +74,8 @@ resource "google_compute_firewall" "zcashd" {
 }
 
 resource "google_compute_firewall" "zcashd_private" {
-  name    = "zcashd-firewall-private"
-  network = google_compute_network.zcash_network.self_link
+  name       = "zcashd-firewall-private"
+  network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
   target_tags   = ["fullnode"]
@@ -90,94 +90,118 @@ resource "google_compute_firewall" "zcashd_private" {
 module "zcashd-fullnode" {
   source = "./modules/zcashd-fullnode"
   # variables
-  project                        = var.project
-  network_name                   = var.network_name
-  service_account_scopes         = var.service_account_scopes
-  region                         = var.region
-  zone                           = var.zone
-  params_disk_name               = var.params_disk_name
-  data_disk_name                 = var.data_disk_name
-  data_disk_size                 = var.data_disk_size
-  GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  fullnode_count                 = var.replicas["zcashd-fullnode"]
-  instance_type                  = var.instance_types["zcashd-fullnode"]
-  boot_disk_size                 = var.boot_disk_size
-  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
-  os_image                       = var.os_image
-  depends_on                     = [google_compute_network.zcash_network]
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  params_disk_name            = var.params_disk_name
+  data_disk_name              = var.data_disk_name
+  data_disk_size              = var.data_disk_size
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  fullnode_count              = var.replicas["zcashd-fullnode"]
+  instance_type               = var.instance_types["zcashd-fullnode"]
+  boot_disk_size              = var.boot_disk_size
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  depends_on                  = [google_compute_network.zcash_network]
 }
 
 module "zcashd-privatenode" {
   source = "./modules/zcashd-privatenode"
   # variables
-  project                        = var.project
-  network_name                   = var.network_name
-  service_account_scopes         = var.service_account_scopes
-  region                         = var.region
-  zone                           = var.zone
-  params_disk_name               = var.params_disk_name
-  data_disk_name                 = var.data_disk_name
-  data_disk_size                 = var.data_disk_size
-  GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  fullnode_private_ip_address    = module.zcashd-fullnode.internal_ip_addresses
-  privatenode_count              = var.replicas["zcashd-privatenode"]
-  instance_type                  = var.instance_types["zcashd-privatenode"]
-  boot_disk_size                 = var.boot_disk_size
-  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
-  os_image                       = var.os_image
-  depends_on                     = [google_compute_network.zcash_network]
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  params_disk_name            = var.params_disk_name
+  data_disk_name              = var.data_disk_name
+  data_disk_size              = var.data_disk_size
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  fullnode_private_ip_address = module.zcashd-fullnode.internal_ip_addresses
+  privatenode_count           = var.replicas["zcashd-privatenode"]
+  instance_type               = var.instance_types["zcashd-privatenode"]
+  boot_disk_size              = var.boot_disk_size
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  depends_on                  = [google_compute_network.zcash_network]
 }
 
 module "zcashd-archivenode" {
   source = "./modules/zcashd-archivenode"
   # variables
-  project                        = var.project
-  network_name                   = var.network_name
-  service_account_scopes         = var.service_account_scopes
-  region                         = var.region
-  zone                           = var.zone
-  params_disk_name               = var.params_disk_name
-  data_disk_name                 = var.data_disk_name
-  data_disk_size                 = var.data_disk_size
-  GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  archivenode_count              = var.replicas["zcashd-archivenode"]
-  instance_type                  = var.instance_types["zcashd-archivenode"]
-  boot_disk_size                 = var.boot_disk_size
-  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
-  os_image                       = var.os_image
-  depends_on                     = [google_compute_network.zcash_network]
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  params_disk_name            = var.params_disk_name
+  data_disk_name              = var.data_disk_name
+  data_disk_size              = var.data_disk_size
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  archivenode_count           = var.replicas["zcashd-archivenode"]
+  instance_type               = var.instance_types["zcashd-archivenode"]
+  boot_disk_size              = var.boot_disk_size
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  depends_on                  = [google_compute_network.zcash_network]
 }
 
 module "zebrad-archivenode" {
   source = "./modules/zebrad-archivenode"
   # variables
-  project                        = var.project
-  network_name                   = var.network_name
-  service_account_scopes         = var.service_account_scopes
-  region                         = var.region
-  zone                           = var.zone
-  params_disk_name               = var.zebra_params_disk_name  #"zebra-cargo"  
-  data_disk_name                 = var.zebra_data_disk_name    #"zebra-data" 
-  data_disk_size                 = var.data_disk_size
-  zebra_release_tag              = var.zebra_release_tag
-  GCP_DEFAULT_SERVICE_ACCOUNT    = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  archivenode_count              = var.replicas["zebrad-archivenode"]
-  instance_type                  = var.instance_types["zebrad-archivenode"]
-  boot_disk_size                 = var.boot_disk_size
-  subnetwork                     = data.google_compute_subnetwork.zcash_subnetwork.self_link
-  os_image                       = var.os_image
-  depends_on                     = [google_compute_network.zcash_network]
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  params_disk_name            = var.zebra_params_disk_name #"zebra-cargo"  
+  data_disk_name              = var.zebra_data_disk_name   #"zebra-data" 
+  data_disk_size              = var.data_disk_size
+  zebra_release_tag           = var.zebra_release_tag
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  archivenode_count           = var.replicas["zebrad-archivenode"]
+  instance_type               = var.instance_types["zebrad-archivenode"]
+  boot_disk_size              = var.boot_disk_size
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  depends_on                  = [google_compute_network.zcash_network]
+}
+
+module "z3" {
+  source = "./modules/z3"
+  # variables
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  instance_count              = var.replicas["z3"]
+  instance_type               = var.instance_types["z3"]
+  boot_disk_size              = var.z3_boot_disk_size
+  data_disk_name              = var.z3_data_disk_name
+  data_disk_size              = var.z3_data_disk_size
+  data_disk_type              = var.z3_data_disk_type
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  z3_repo_url                 = var.z3_repo_url
+  z3_repo_ref                 = var.z3_repo_ref
+  z3_network                  = var.z3_network
+  z3_mount_path               = var.z3_mount_path
+  depends_on                  = [google_compute_network.zcash_network]
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {
-  name = "${var.project}-chaindata"
+  name     = "${var.project}-chaindata"
   location = "US"
 
   uniform_bucket_level_access = true
 
   lifecycle_rule {
     condition {
-      num_newer_versions = 10  # keep 10 copies of chaindata backups (use `gsutil ls -la $bucket` to see versioned objects)
+      num_newer_versions = 10 # keep 10 copies of chaindata backups (use `gsutil ls -la $bucket` to see versioned objects)
     }
     action {
       type = "Delete"
@@ -185,34 +209,34 @@ resource "google_storage_bucket" "chaindata_bucket" {
   }
 
   versioning {
-      enabled = true
-    }
+    enabled = true
+  }
 }
 
 resource "google_storage_bucket_iam_binding" "chaindata_binding_write" {
   bucket = "${var.project}-chaindata"
-  role = "roles/storage.objectCreator"
+  role   = "roles/storage.objectCreator"
   members = [
     "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
   ]
   depends_on = [
-  google_storage_bucket.chaindata_bucket
+    google_storage_bucket.chaindata_bucket
   ]
 }
 
 resource "google_storage_bucket_iam_binding" "chaindata_binding_read" {
   bucket = "${var.project}-chaindata"
-  role = "roles/storage.objectViewer"
+  role   = "roles/storage.objectViewer"
   members = [
     "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
   ]
   depends_on = [
-  google_storage_bucket.chaindata_bucket
+    google_storage_bucket.chaindata_bucket
   ]
 }
 
 resource "google_storage_bucket" "chaindata_rsync_bucket" {
-  name = "${var.project}-chaindata-rsync"
+  name     = "${var.project}-chaindata-rsync"
   location = "US"
 
   uniform_bucket_level_access = true
@@ -221,23 +245,23 @@ resource "google_storage_bucket" "chaindata_rsync_bucket" {
 
 resource "google_storage_bucket_iam_binding" "chaindata_rsync_binding_write" {
   bucket = "${var.project}-chaindata-rsync"
-  role = "roles/storage.objectCreator"
+  role   = "roles/storage.objectCreator"
   members = [
     "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
   ]
   depends_on = [
-  google_storage_bucket.chaindata_rsync_bucket
+    google_storage_bucket.chaindata_rsync_bucket
   ]
 }
 
 resource "google_storage_bucket_iam_binding" "chaindata_rsync_binding_read" {
   bucket = "${var.project}-chaindata-rsync"
-  role = "roles/storage.objectViewer"
+  role   = "roles/storage.objectViewer"
   members = [
     "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
   ]
   depends_on = [
-  google_storage_bucket.chaindata_rsync_bucket
+    google_storage_bucket.chaindata_rsync_bucket
   ]
 }
 
@@ -250,9 +274,9 @@ jsonPayload.message=~"zebrad::components::sync::progress.*current_height=Height"
 EOT
 
   metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "DISTRIBUTION"
-    unit        = "1"
+    metric_kind  = "DELTA"
+    value_type   = "DISTRIBUTION"
+    unit         = "1"
     display_name = "TF Zebra Node Block Height Distribution"
 
     labels {
@@ -288,9 +312,9 @@ jsonPayload.message=~".*UpdateTip.*height.*"
 EOT
 
   metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "DISTRIBUTION"
-    unit        = "1"
+    metric_kind  = "DELTA"
+    value_type   = "DISTRIBUTION"
+    unit         = "1"
     display_name = "TF Zcashd Node Block Height Distribution"
 
     labels {

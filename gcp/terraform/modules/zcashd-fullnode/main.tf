@@ -13,22 +13,22 @@ resource "google_compute_address" "fullnode_internal" {
 resource "google_compute_disk" "zcashdata-fullnode-tmp" {
   name = "${var.data_disk_name}-fullnode-tmp"
   #type = "pd-ssd"
-  type = "pd-standard"  #want SSD but running into quota issues in region :(
-  size = var.data_disk_size
+  type     = "pd-standard" #want SSD but running into quota issues in region :(
+  size     = var.data_disk_size
   snapshot = "${var.data_disk_name}-snapshot-latest"
-  count = var.fullnode_count
+  count    = var.fullnode_count
 }
 
 resource "google_compute_disk" "zcashparams-fullnode-tmp" {
-  name = "${var.params_disk_name}-fullnode-tmp"
-  type = "pd-standard"
+  name     = "${var.params_disk_name}-fullnode-tmp"
+  type     = "pd-standard"
   snapshot = "${var.params_disk_name}-snapshot-latest"
-  size = 2
-  count = var.fullnode_count
+  size     = 2
+  count    = var.fullnode_count
 }
 
 resource "google_compute_instance" "fullnode" {
-  name = "zcash-fullnode"
+  name         = "zcash-fullnode"
   machine_type = var.instance_type
 
   count = var.fullnode_count
@@ -38,17 +38,17 @@ resource "google_compute_instance" "fullnode" {
   boot_disk {
     initialize_params {
       image = var.os_image
-      size = var.boot_disk_size
+      size  = var.boot_disk_size
     }
   }
 
   attached_disk {
-    source = "${var.data_disk_name}-fullnode-tmp"
+    source      = "${var.data_disk_name}-fullnode-tmp"
     device_name = var.data_disk_name
   }
 
   attached_disk {
-    source = "${var.params_disk_name}-fullnode-tmp"
+    source      = "${var.params_disk_name}-fullnode-tmp"
     device_name = var.params_disk_name
   }
 
@@ -65,8 +65,8 @@ resource "google_compute_instance" "fullnode" {
       params_disk_name : var.params_disk_name,
       data_disk_name : var.data_disk_name,
       gcloud_project : var.project,
-      gcloud_region  : var.region,
-      gcloud_zone    : var.zone,
+      gcloud_region : var.region,
+      gcloud_zone : var.zone,
       external_ip_address : google_compute_address.fullnode.address
     }
   )

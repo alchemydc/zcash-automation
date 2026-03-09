@@ -12,23 +12,23 @@ resource "google_compute_address" "archivenode_internal" {
 
 resource "google_compute_disk" "zcashdata" {
   count = var.archivenode_count
-  name = var.data_disk_name
+  name  = var.data_disk_name
   #type = "pd-ssd"
-  type = "pd-standard"  #want SSD but running into quota issues in region :(
+  type = "pd-standard" #want SSD but running into quota issues in region :(
   size = var.data_disk_size
 }
 
 resource "google_compute_disk" "zcashparams" {
   count = var.archivenode_count
-  name = var.params_disk_name
-  type = "pd-standard"
-  size = 2
+  name  = var.params_disk_name
+  type  = "pd-standard"
+  size  = 2
 }
 
 resource "google_compute_instance" "archivenode" {
-  name = "zcash-archivenode"
+  name         = "zcash-archivenode"
   machine_type = var.instance_type
-  depends_on = [google_compute_disk.zcashdata]
+  depends_on   = [google_compute_disk.zcashdata]
 
   count = var.archivenode_count
 
@@ -37,17 +37,17 @@ resource "google_compute_instance" "archivenode" {
   boot_disk {
     initialize_params {
       image = var.os_image
-      size = var.boot_disk_size
+      size  = var.boot_disk_size
     }
   }
 
   attached_disk {
-    source = google_compute_disk.zcashdata[0].name
+    source      = google_compute_disk.zcashdata[0].name
     device_name = google_compute_disk.zcashdata[0].name
   }
 
   attached_disk {
-    source = google_compute_disk.zcashparams[0].name
+    source      = google_compute_disk.zcashparams[0].name
     device_name = google_compute_disk.zcashparams[0].name
   }
 
@@ -64,8 +64,8 @@ resource "google_compute_instance" "archivenode" {
       params_disk_name : var.params_disk_name,
       data_disk_name : var.data_disk_name,
       gcloud_project : var.project,
-      gcloud_region  : var.region,
-      gcloud_zone    : var.zone,
+      gcloud_region : var.region,
+      gcloud_zone : var.zone,
       external_ip_address : google_compute_address.archivenode.address,
       enable_cron_backups : var.enable_cron_backups
     }

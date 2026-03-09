@@ -41,7 +41,7 @@ Support for GCP's Stackdriver platform has been enabled, which makes it easy to 
    ```console
     ./bootstrap.sh
    ```
-   This will create a template gcloud.env for you, which will store environment variables specific to your GCP organization.
+    This will create a template gcloud.env for you, which will store environment variables specific to your GCP organization.
 
 5. Edit gcloud.env and set
     * 'TF_VAR_project' to the name of the GCP project to create
@@ -50,12 +50,14 @@ Support for GCP's Stackdriver platform has been enabled, which makes it easy to 
     * 'TF_VAR_region' to the gcloud region you want to use. You can enumerate regions by running `gcloud compute regions list`
     * 'TF_VAR_zone' to the gcloud zone you want to use. You can enumerate zones by running `gcloud compute zones list`
 
-6. Run bootstrap.sh again to initialize your new GCP project and enable appropriate API's
+6. Run bootstrap.sh again to initialize your new GCP project or prepare an existing one and enable appropriate API's
     ```console
     ./bootstrap.sh
     ```
 
-    Note that when this completes, you need to `source gcloud.env` again in order to import the newly created GCP service account which Terraform will use.
+    For an existing project, set `TF_VAR_project`, `TF_VAR_region`, and `TF_VAR_zone` in `gcloud.env` and re-run `./bootstrap.sh`. `TF_VAR_org_id` and `TF_VAR_billing_account` are only required when the script needs to create a new project.
+
+    Note that when this completes, you need to `source gcloud.env` again in order to import the impersonated access token and the default compute service account which Terraform will use.
 
 7. Initialize terraform
     `terraform init`
@@ -88,7 +90,8 @@ variable replicas {
         zcashd-archivenode         = 1
         zcashd-fullnode            = 0
         zcashd-privatenode         = 0 
-        zebrad-archivenode         = 1 
+        zebrad-archivenode         = 1
+        z3                         = 0
     }
 }
 ```
@@ -98,7 +101,8 @@ A decription of each of the different types of infrastructure available follows:
 * zcashd-archivenode: a [Zcashd](https://github.com/zcash/zcash) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zcashd-archivenode also stops zcashd at regularly scheduled intervals in order to backup the chaindata (26GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.
 * zcashd-fullnode: a Zcashd full node which connects via Tor to other publicly reachable Zcashd nodes.  Note that inbound connections from other Tor nodes to a hidden service address is not presently enabled due to lack of support for v3 onion addresses. Fullnodes ordinarily *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.  The zcashd-fullnode accepts incoming connections on tcp/8233, but *only from the private VPC network*.
 * zcashd-privatenode: a Zcashd full node which connects via the non-routable private VPC network to the zcashd-fullnode, and is not directly exposed to the Internet.  privatenodes ordinarly *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.
-* zebrad-archivenode: a [Zebrad](https://github.com/ZcashFoundation/zebra) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zebrad-archivenode also stops zebrad at regularly scheduled intervals in order to backup the chaindata (32GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.   
+* zebrad-archivenode: a [Zebrad](https://github.com/ZcashFoundation/zebra) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zebrad-archivenode also stops zebrad at regularly scheduled intervals in order to backup the chaindata (32GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.
+* z3: a Docker-based [Z3](https://github.com/zcashfoundation/z3) host that installs Docker Engine, clones the z3 repo, installs `rage`, mounts a dedicated persistent disk for Zebra chain data, builds the required images, and starts Zebra first so it can complete its initial sync before the rest of the stack is brought up.
 
 
 ## Warning
