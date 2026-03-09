@@ -4,6 +4,14 @@ provider "google" {
   zone    = var.zone
 }
 
+locals {
+  zcashd_fullnode_enabled     = var.replicas["zcashd-fullnode"] > 0
+  zcashd_privatenode_enabled  = var.replicas["zcashd-privatenode"] > 0
+  zcashd_archivenode_enabled  = var.replicas["zcashd-archivenode"] > 0
+  zebrad_archivenode_enabled  = var.replicas["zebrad-archivenode"] > 0
+  z3_enabled                  = var.replicas["z3"] > 0
+}
+
 resource "google_project_service" "compute" {
   project                    = var.project
   service                    = "compute.googleapis.com"
@@ -88,6 +96,7 @@ resource "google_compute_firewall" "zcashd_private" {
 }
 
 module "zcashd-fullnode" {
+  count  = local.zcashd_fullnode_enabled ? 1 : 0
   source = "./modules/zcashd-fullnode"
   # variables
   project                     = var.project
@@ -108,6 +117,7 @@ module "zcashd-fullnode" {
 }
 
 module "zcashd-privatenode" {
+  count  = local.zcashd_privatenode_enabled ? 1 : 0
   source = "./modules/zcashd-privatenode"
   # variables
   project                     = var.project
@@ -119,7 +129,7 @@ module "zcashd-privatenode" {
   data_disk_name              = var.data_disk_name
   data_disk_size              = var.data_disk_size
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  fullnode_private_ip_address = module.zcashd-fullnode.internal_ip_addresses
+  fullnode_private_ip_address = local.zcashd_fullnode_enabled ? module.zcashd-fullnode[0].internal_ip_addresses : null
   privatenode_count           = var.replicas["zcashd-privatenode"]
   instance_type               = var.instance_types["zcashd-privatenode"]
   boot_disk_size              = var.boot_disk_size
@@ -129,6 +139,7 @@ module "zcashd-privatenode" {
 }
 
 module "zcashd-archivenode" {
+  count  = local.zcashd_archivenode_enabled ? 1 : 0
   source = "./modules/zcashd-archivenode"
   # variables
   project                     = var.project
@@ -149,6 +160,7 @@ module "zcashd-archivenode" {
 }
 
 module "zebrad-archivenode" {
+  count  = local.zebrad_archivenode_enabled ? 1 : 0
   source = "./modules/zebrad-archivenode"
   # variables
   project                     = var.project
@@ -170,6 +182,7 @@ module "zebrad-archivenode" {
 }
 
 module "z3" {
+  count  = local.z3_enabled ? 1 : 0
   source = "./modules/z3"
   # variables
   project                     = var.project

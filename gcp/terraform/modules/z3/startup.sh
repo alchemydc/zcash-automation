@@ -37,9 +37,9 @@ install_base_packages() {
         gnupg \
         jq \
         openssl \
-        software-properties-common \
         tmux \
-        unzip
+        unzip \
+        htop
 }
 
 install_tmux_config() {
@@ -178,13 +178,13 @@ ensure_rage() {
 
     dpkg_arch="$(dpkg --print-architecture)"
     github_api_url="https://api.github.com/repos/str4d/rage/releases/latest"
-    rage_package_path="/tmp/rage_latest_${dpkg_arch}.deb"
+    rage_package_path="/tmp/rage_latest_$${dpkg_arch}.deb"
 
-    log "Installing latest rage binary package for architecture ${dpkg_arch}"
+    log "Installing latest rage binary package for architecture $${dpkg_arch}"
     rage_asset_url="$(curl -fsSL "$github_api_url" | jq -r --arg suffix "_$dpkg_arch.deb" '.assets[] | select(.name | startswith("rage_") and endswith($suffix)) | .browser_download_url' | head -n 1)"
 
     if [ -z "$rage_asset_url" ] || [ "$rage_asset_url" = "null" ]; then
-        log "No compatible rage Debian package found for architecture ${dpkg_arch}"
+        log "No compatible rage Debian package found for architecture $${dpkg_arch}"
         exit 1
     fi
 
@@ -355,6 +355,7 @@ ensure_data_disk
 ensure_rage
 checkout_repo
 configure_repo
-build_required_images
+#build_required_images
+# uncomment above ot use local build instead of pulling from registry - requires docker buildx to be installed
 install_runtime_helpers
 log "z3 host initialization complete"

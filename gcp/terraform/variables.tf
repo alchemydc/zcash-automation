@@ -101,7 +101,7 @@ variable "boot_disk_size" {
 variable "os_image" {
   type        = string
   description = "The GCP image to use for VM boot disks"
-  default     = "debian-cloud/debian-12"
+  default     = "debian-cloud/debian-13"
 }
 
 variable "zebra_release_tag" {
