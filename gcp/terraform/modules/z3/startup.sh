@@ -99,6 +99,18 @@ setw -g window-status-format "#I:#W"
 EOF
 }
 
+install_global_bash_aliases() {
+    local alias_line="alias ll='ls -laF'"
+
+    if grep -Fqx "$alias_line" /etc/bash.bashrc; then
+        log "Global bash alias ll already configured"
+        return
+    fi
+
+    log "Installing global bash alias ll"
+    printf '\n# Added by z3 startup\n%s\n' "$alias_line" >> /etc/bash.bashrc
+}
+
 install_ops_agent() {
     if dpkg -s google-cloud-ops-agent >/dev/null 2>&1; then
         log "Google Ops Agent already installed"
@@ -348,6 +360,7 @@ EOF
 log "Starting z3 host initialization for project ${gcloud_project}"
 install_base_packages
 install_tmux_config
+install_global_bash_aliases
 install_ops_agent
 install_docker
 ensure_user

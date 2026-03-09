@@ -39,6 +39,7 @@ variable "zone" {
   description = "The GCP zone"
 }
 
+# GCP "network" not blockchain network
 variable "network_name" {
   type    = string
   default = "zcash-network"
@@ -136,7 +137,7 @@ variable "z3_network" {
 variable "z3_boot_disk_size" {
   description = "Size (in GB) of the z3 boot disk used for Docker images, builds, and repo checkout"
   type        = number
-  default     = 10
+  default     = 50
 }
 
 variable "z3_data_disk_name" {

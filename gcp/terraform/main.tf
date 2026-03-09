@@ -10,6 +10,7 @@ locals {
   zcashd_archivenode_enabled  = var.replicas["zcashd-archivenode"] > 0
   zebrad_archivenode_enabled  = var.replicas["zebrad-archivenode"] > 0
   z3_enabled                  = var.replicas["z3"] > 0
+  z3_public_p2p_port          = lookup({ mainnet = "8233", testnet = "18232" }, var.z3_network, null)
 }
 
 resource "google_project_service" "compute" {
@@ -92,6 +93,21 @@ resource "google_compute_firewall" "zcashd_private" {
   allow {
     protocol = "tcp"
     ports    = ["8233"]
+  }
+}
+
+resource "google_compute_firewall" "z3" {
+  count      = local.z3_public_p2p_port != null ? 1 : 0
+  name       = "z3-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["z3"]
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [local.z3_public_p2p_port]
   }
 }
 
