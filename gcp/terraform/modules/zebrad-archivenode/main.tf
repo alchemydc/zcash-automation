@@ -6,28 +6,28 @@ resource "google_compute_address" "zebrad_archivenode" {
 resource "google_compute_address" "zebrad_archivenode_internal" {
   name         = "zebrad-archivenode-internal-address"
   address_type = "INTERNAL"
+  subnetwork   = var.subnetwork
   purpose      = "GCE_ENDPOINT"
 }
 
 resource "google_compute_disk" "zebradata" {
-  name = var.data_disk_name
-  type = "pd-standard"
-  size = var.data_disk_size
+  name  = var.data_disk_name
+  type  = "pd-standard"
+  size  = var.data_disk_size
   count = var.archivenode_count
 }
 
-resource "google_compute_disk" "zebracargo" {
-  name = var.params_disk_name
-  type = "pd-ssd"
-  size = 5
+resource "google_compute_disk" "zebraparams" {
+  name  = var.params_disk_name
+  type  = "pd-standard"
+  size  = 5
   count = var.archivenode_count
 }
 
 resource "google_compute_instance" "archivenode" {
-  name = "zebra-archivenode"
-  machine_type = "n1-standard-2"   # FIXME: parameterize this :)
-  #machine_type = var.instance_types["zebrad_archivenode"]
-  depends_on = [google_compute_disk.zebradata]
+  name         = "zebra-archivenode"
+  machine_type = var.instance_type
+  depends_on   = [google_compute_disk.zebradata]
 
   count = var.archivenode_count
 
@@ -35,19 +35,19 @@ resource "google_compute_instance" "archivenode" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-10"
-      size = var.boot_disk_size
+      image = var.os_image
+      size  = var.boot_disk_size
     }
   }
 
   attached_disk {
-    source = var.data_disk_name
-    device_name = var.data_disk_name
+    source      = google_compute_disk.zebradata[0].name
+    device_name = google_compute_disk.zebradata[0].name
   }
 
   attached_disk {
-    source = var.params_disk_name
-    device_name = var.params_disk_name
+    source      = google_compute_disk.zebraparams[0].name
+    device_name = google_compute_disk.zebraparams[0].name
   }
 
   network_interface {
@@ -63,9 +63,11 @@ resource "google_compute_instance" "archivenode" {
       params_disk_name : var.params_disk_name,
       data_disk_name : var.data_disk_name,
       gcloud_project : var.project,
-      gcloud_region  : var.region,
-      gcloud_zone    : var.zone,
-      external_ip_address : google_compute_address.zebrad_archivenode.address
+      gcloud_region : var.region,
+      gcloud_zone : var.zone,
+      external_ip_address : google_compute_address.zebrad_archivenode.address,
+      enable_cron_backups : var.enable_cron_backups,
+      zebra_release_tag : var.zebra_release_tag
     }
   )
 

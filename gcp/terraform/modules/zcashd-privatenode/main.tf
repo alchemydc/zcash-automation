@@ -6,27 +6,28 @@ resource "google_compute_address" "privatenode" {
 resource "google_compute_address" "privatenode_internal" {
   name         = "privatenode-internal-address"
   address_type = "INTERNAL"
+  subnetwork   = var.subnetwork
   purpose      = "GCE_ENDPOINT"
 }
 
 resource "google_compute_disk" "zcashdata-privatenode-tmp" {
-  name = "${var.data_disk_name}-privatenode-tmp"
-  type = "pd-ssd"
-  size = var.data_disk_size
+  name     = "${var.data_disk_name}-privatenode-tmp"
+  type     = "pd-ssd"
+  size     = var.data_disk_size
   snapshot = "${var.data_disk_name}-snapshot-latest"
-  count = var.privatenode_count
+  count    = var.privatenode_count
 }
 
 resource "google_compute_disk" "zcashparams-privatenode-tmp" {
-  name = "${var.params_disk_name}-privatenode-tmp"
-  type = "pd-standard"
+  name     = "${var.params_disk_name}-privatenode-tmp"
+  type     = "pd-standard"
   snapshot = "${var.params_disk_name}-snapshot-latest"
-  size = 2
-  count = var.privatenode_count
+  size     = 2
+  count    = var.privatenode_count
 }
 
 resource "google_compute_instance" "privatenode" {
-  name = "zcash-privatenode"
+  name         = "zcash-privatenode"
   machine_type = var.instance_type
 
   count = var.privatenode_count
@@ -35,18 +36,18 @@ resource "google_compute_instance" "privatenode" {
 
   boot_disk {
     initialize_params {
-      image = "debian-cloud/debian-10"
-      size = var.boot_disk_size
+      image = var.os_image
+      size  = var.boot_disk_size
     }
   }
 
   attached_disk {
-    source = "${var.data_disk_name}-privatenode-tmp"
+    source      = "${var.data_disk_name}-privatenode-tmp"
     device_name = var.data_disk_name
   }
 
   attached_disk {
-    source = "${var.params_disk_name}-privatenode-tmp"
+    source      = "${var.params_disk_name}-privatenode-tmp"
     device_name = var.params_disk_name
   }
 
@@ -58,10 +59,10 @@ resource "google_compute_instance" "privatenode" {
   metadata_startup_script = templatefile(
     format("%s/startup.sh", path.module), {
       params_disk_name : var.params_disk_name,
-      data_disk_name              : var.data_disk_name,
-      gcloud_project              : var.project,
-      gcloud_region               : var.region,
-      gcloud_zone                 : var.zone,
+      data_disk_name : var.data_disk_name,
+      gcloud_project : var.project,
+      gcloud_region : var.region,
+      gcloud_zone : var.zone,
       fullnode_private_ip_address : var.fullnode_private_ip_address
     }
   )

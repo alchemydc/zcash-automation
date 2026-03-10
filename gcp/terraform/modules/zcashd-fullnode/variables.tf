@@ -1,25 +1,25 @@
 variable "project" {
-  type = string
+  type        = string
   description = "The GCP project"
 }
 
 variable "region" {
-  type = string
+  type        = string
   description = "The GCP region"
 }
 
 variable "zone" {
-  type = string
+  type        = string
   description = "The GCP zone"
 }
 
 variable "network_name" {
-  type = string
+  type    = string
   default = "zcash-network"
 }
 
 variable "GCP_DEFAULT_SERVICE_ACCOUNT" {
-  type = string
+  type        = string
   description = "The GCP service account"
 }
 
@@ -32,37 +32,45 @@ variable "service_account_scopes" {
   default = [
     "https://www.googleapis.com/auth/monitoring.write",
     "https://www.googleapis.com/auth/logging.write",
-    "https://www.googleapis.com/auth/cloud-platform"         #this gives r/w to all storage buckets, which is overly broad
-    ]
+    "https://www.googleapis.com/auth/cloud-platform" #this gives r/w to all storage buckets, which is overly broad
+  ]
 }
 
 variable "data_disk_size" {
-  type = number
+  type        = number
   description = "Size (in GB) of the disk where the parameters and chaindata reside"
-  default = 100
 }
 
 variable "params_disk_name" {
-  type = string
+  type        = string
   description = "name of disk for persisting the Zcash parameters"
 }
 
+variable "subnetwork" {
+  type        = string
+  description = "The self_link of the subnetwork to use for internal addresses"
+}
 variable "data_disk_name" {
-  type = string
+  type        = string
   description = "name of disk for persisting the Zcash blockchain"
 }
 
-variable fullnode_count {
+variable "fullnode_count" {
   description = "Number of full nodes to spin up"
-  type = number
+  type        = number
 }
 
-variable instance_type {
+variable "instance_type" {
   description = "The GCP instance type to use for this node"
-  type = string
+  type        = string
 }
 
-variable "boot_disk_size" { 
-  type = number
+variable "boot_disk_size" {
+  type        = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
+}
+
+variable "os_image" {
+  type        = string
+  description = "The GCP image to use for VM boot disks"
 }
