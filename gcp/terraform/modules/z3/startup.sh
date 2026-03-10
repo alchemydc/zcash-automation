@@ -239,6 +239,10 @@ ensure_env_var() {
     fi
     printf '%s=%s\n' "$key" "$value" >> "$temp_file"
     mv "$temp_file" "$env_file"
+
+    # Preserve app-user access because mv recreates .env as root-owned.
+    chown "$APP_USER:$APP_USER" "$env_file"
+    chmod u+rw "$env_file"
 }
 
 configure_repo() {
@@ -255,6 +259,9 @@ configure_repo() {
             touch .env
         fi
     fi
+
+    chown "$APP_USER:$APP_USER" .env
+    chmod u+rw .env
 
     mkdir -p config/tls
 
