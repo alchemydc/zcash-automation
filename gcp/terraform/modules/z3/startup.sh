@@ -13,6 +13,7 @@ APP_USER="z3"
 DATA_MOUNT_PATH="${z3_mount_path}"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 DOCKER_CONFIG_DIR="/etc/apt/keyrings"
+INSTALL_RUST_TOOLCHAIN="${install_rust_toolchain}"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
@@ -39,7 +40,8 @@ install_base_packages() {
         openssl \
         tmux \
         unzip \
-        htop
+        htop \
+        ripgrep
 }
 
 install_tmux_config() {
@@ -109,6 +111,40 @@ install_global_bash_aliases() {
 
     log "Installing global bash alias ll"
     printf '\n# Added by z3 startup\n%s\n' "$alias_line" >> /etc/bash.bashrc
+}
+
+install_rust_toolchain() {
+    local app_home
+
+    if [ "$INSTALL_RUST_TOOLCHAIN" != "true" ]; then
+        log "Skipping Rust toolchain installation"
+        return
+    fi
+
+    log "Installing Rust toolchain for $APP_USER"
+    apt-get install -y \
+        build-essential \
+        clang \
+        pkg-config \
+        libssl-dev
+
+    app_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
+
+    if [ -z "$app_home" ]; then
+        log "Could not determine home directory for $APP_USER"
+        exit 1
+    fi
+
+    if ! su - "$APP_USER" -c 'command -v rustup >/dev/null 2>&1'; then
+        su - "$APP_USER" -c 'curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable'
+    fi
+
+    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && rustup toolchain install stable && rustup default stable && rustup component add clippy rustfmt'
+
+    if ! grep -Fq '. "$HOME/.cargo/env"' "$app_home/.bashrc"; then
+        printf '\n# Added by z3 startup\n. "$HOME/.cargo/env"\n' >> "$app_home/.bashrc"
+        chown "$APP_USER:$APP_USER" "$app_home/.bashrc"
+    fi
 }
 
 install_ops_agent() {
@@ -371,6 +407,7 @@ install_global_bash_aliases
 install_ops_agent
 install_docker
 ensure_user
+install_rust_toolchain
 ensure_data_disk
 ensure_rage
 checkout_repo

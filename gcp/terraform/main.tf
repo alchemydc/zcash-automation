@@ -234,6 +234,7 @@ module "z3" {
   z3_repo_ref                 = var.z3_repo_ref
   z3_network                  = var.z3_network
   z3_mount_path               = var.z3_mount_path
+  install_rust_toolchain      = var.z3_install_rust_toolchain
   depends_on                  = [google_compute_network.zcash_network]
 }
 

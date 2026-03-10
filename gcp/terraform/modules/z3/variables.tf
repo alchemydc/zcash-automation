@@ -87,3 +87,9 @@ variable "z3_mount_path" {
   type        = string
   description = "Host path where the persistent z3 Zebra data disk is mounted"
 }
+
+variable "install_rust_toolchain" {
+  type        = bool
+  description = "Whether to install rustup/cargo for the z3 app user"
+  default     = true
+}

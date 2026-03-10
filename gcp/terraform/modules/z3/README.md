@@ -5,6 +5,7 @@ This module provisions a GCE VM for the Z3 stack and configures it during startu
 - install Docker Engine and the Docker Compose plugin
 - clone the z3 repository
 - install `rage` and `rage-keygen`
+- optionally install a Rust toolchain (`rustup`, `cargo`, `rustfmt`, `clippy`) for the `z3` app user
 - provision and mount a dedicated persistent data disk for Zebra chain state
 - build the required container images
 - start the initial Zebra-only sync phase via systemd
@@ -59,3 +60,10 @@ Host z3-0
 ```
 
 Security tradeoff: using a shared Unix user improves operator ergonomics in VS Code but reduces per-user Unix-level audit attribution.
+
+## Optional Rust Toolchain
+
+Set `install_rust_toolchain = true` to install a working Rust environment for the `z3` app user during startup.
+
+- includes `rustup`, `cargo`, stable toolchain, `rustfmt`, and `clippy`
+- setup is idempotent and skipped when disabled

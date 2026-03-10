@@ -163,3 +163,9 @@ variable "z3_mount_path" {
   type        = string
   default     = "/var/lib/z3/zebra-state"
 }
+
+variable "z3_install_rust_toolchain" {
+  description = "Whether to install rustup/cargo for the z3 app user"
+  type        = bool
+  default     = false
+}

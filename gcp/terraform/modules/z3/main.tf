@@ -54,6 +54,7 @@ resource "google_compute_instance" "z3" {
     {
       data_disk_name = google_compute_disk.z3_data[count.index].name,
       gcloud_project = var.project,
+      install_rust_toolchain = var.install_rust_toolchain,
       z3_mount_path  = var.z3_mount_path,
       z3_network     = var.z3_network,
       z3_repo_ref    = var.z3_repo_ref,
