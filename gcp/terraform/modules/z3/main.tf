@@ -61,6 +61,14 @@ resource "google_compute_instance" "z3" {
     }
   )
 
+  # Allow direct SSH login as the shared app account (z3).
+  # This module intentionally disables OS Login so operators can use VS Code
+  # Remote-SSH as z3.
+  metadata = {
+    enable-oslogin       = "FALSE"
+    block-project-ssh-keys = "TRUE"
+  }
+
   service_account {
     scopes = var.service_account_scopes
   }

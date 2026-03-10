@@ -58,8 +58,23 @@ resource "google_compute_firewall" "sshd" {
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
-  target_tags   = ["fullnode", "privatenode", "archivenode", "z3"]
+  target_tags   = ["fullnode", "privatenode", "archivenode"]
   source_ranges = ["0.0.0.0/0"] # Consider restricting this to your IP range for security
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+# Only allow SSH to z3 instances through IAP TCP forwarding.
+resource "google_compute_firewall" "sshd_z3_iap" {
+  name       = "sshd-z3-iap-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["z3"]
+  source_ranges = ["35.235.240.0/20"]
 
   allow {
     protocol = "tcp"
