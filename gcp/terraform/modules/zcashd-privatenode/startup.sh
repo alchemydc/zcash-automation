@@ -1,6 +1,14 @@
 #!/bin/bash
 set -x
 
+STARTUP_STATE_DIR="/var/lib/zcashd-privatenode-startup"
+PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
+
+if [ -f "$PROVISIONING_COMPLETE_MARKER" ]; then
+  echo "Startup provisioning already completed; skipping" | logger
+  exit 0
+fi
+
 apt update && apt install -y screen htop nftables git
 
 # ---- Configure logrotate ----
@@ -225,3 +233,7 @@ sudo -u zcash zcash-fetch-params
 
 echo "Starting zcashd" | logger
 systemctl start zcashd
+
+mkdir -p "$STARTUP_STATE_DIR"
+touch "$PROVISIONING_COMPLETE_MARKER"
+echo "Privatenode initialization complete" | logger

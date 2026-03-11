@@ -33,6 +33,26 @@ variable "service_account_scopes" {
   type        = list(string)
 }
 
+variable "deployment_name" {
+  description = "Sanitized name for this logical z3 deployment"
+  type        = string
+}
+
+variable "hostname_prefix" {
+  description = "Instance naming prefix used for hosts in this z3 deployment"
+  type        = string
+}
+
+variable "labels" {
+  description = "Labels to apply to z3 instances and attached resources"
+  type        = map(string)
+}
+
+variable "network_tags" {
+  description = "Network tags to apply to z3 instances"
+  type        = list(string)
+}
+
 variable "instance_count" {
   description = "Number of z3 hosts to provision"
   type        = number
@@ -80,7 +100,7 @@ variable "z3_repo_ref" {
 
 variable "z3_network" {
   type        = string
-  description = "The z3 network to configure. Valid values are main or test."
+  description = "The z3 network to configure. Valid values are mainnet, testnet, or regtest."
 }
 
 variable "z3_mount_path" {

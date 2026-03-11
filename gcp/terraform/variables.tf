@@ -7,7 +7,6 @@ variable "replicas" {
     zcashd-fullnode    = 0
     zcashd-privatenode = 0
     zebrad-archivenode = 0
-    z3                 = 1
   }
 }
 
@@ -108,7 +107,7 @@ variable "os_image" {
 variable "zebra_release_tag" {
   description = "The git tag or release to use when building Zebra"
   type        = string
-  default     = "v2.3.0"
+  default     = "v4.1.0"
 }
 
 variable "z3_repo_url" {
@@ -123,14 +122,42 @@ variable "z3_repo_ref" {
   default     = "dev"
 }
 
-variable "z3_network" {
-  description = "The z3 network to configure. Valid values are mainnet, testnet or regtest."
-  type        = string
-  default     = "testnet"
+variable "z3_deployments" {
+  description = "Named z3 deployment groups. Each deployment can target its own network, replicas, labels, and ingress policy, with optional per-deployment overrides for compute and storage sizing."
+  type = map(object({
+    enabled           = optional(bool, true)
+    network           = string
+    replicas          = number
+    instance_type     = optional(string)
+    boot_disk_size    = optional(number)
+    data_disk_name    = optional(string)
+    data_disk_size    = optional(number)
+    data_disk_type    = optional(string)
+    hostname_prefix   = optional(string)
+    labels            = optional(map(string), {})
+    expose_p2p_public = optional(bool)
+    additional_tags   = optional(list(string), [])
+  }))
+  default = {}
 
   validation {
-    condition     = contains(["mainnet", "testnet", "regtest"], var.z3_network)
-    error_message = "z3_network must be either mainnet, testnet or regtest."
+    condition = alltrue([
+      for _, deployment in var.z3_deployments : contains(["mainnet", "testnet", "regtest"], deployment.network)
+    ])
+    error_message = "Each z3 deployment network must be either mainnet, testnet, or regtest."
+  }
+}
+
+variable "z3_instance_types" {
+  description = "Default z3 instance types keyed by blockchain network name. Used unless a deployment sets its own instance_type override."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for network_name in keys(var.z3_instance_types) : contains(["mainnet", "testnet", "regtest"], network_name)
+    ])
+    error_message = "z3_instance_types keys must be limited to mainnet, testnet, and regtest."
   }
 }
 
@@ -150,6 +177,19 @@ variable "z3_data_disk_size" {
   description = "Size (in GB) of the persistent z3 Zebra data disk"
   type        = number
   default     = 500
+}
+
+variable "z3_data_disk_sizes" {
+  description = "Default z3 data disk sizes in GB keyed by blockchain network name. Used unless a deployment sets its own data_disk_size override."
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for network_name in keys(var.z3_data_disk_sizes) : contains(["mainnet", "testnet", "regtest"], network_name)
+    ])
+    error_message = "z3_data_disk_sizes keys must be limited to mainnet, testnet, and regtest."
+  }
 }
 
 variable "z3_data_disk_type" {

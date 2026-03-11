@@ -3,3 +3,4 @@ gcloud.env
 backend.tf
 iam.txt
 *.env
+terraform.tfvars

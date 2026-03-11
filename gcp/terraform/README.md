@@ -91,10 +91,53 @@ variable replicas {
         zcashd-fullnode            = 0
         zcashd-privatenode         = 0 
         zebrad-archivenode         = 1
-        z3                         = 0
     }
 }
 ```
+
+`z3` is configured separately through `z3_deployments` so multiple named deployments can coexist in one apply. Example:
+
+```hcl
+z3_instance_types = {
+    mainnet = "e2-standard-8"
+    testnet = "e2-standard-4"
+    regtest = "e2-standard-2"
+}
+
+z3_data_disk_sizes = {
+    mainnet = 500
+    testnet = 250
+    regtest = 50
+}
+
+z3_deployments = {
+    mainnet = {
+        network  = "mainnet"
+        replicas = 1
+        labels = {
+            env = "mainnet"
+        }
+    }
+
+    testnet = {
+        network  = "testnet"
+        replicas = 1
+        labels = {
+            env = "testnet"
+        }
+    }
+
+    regtest = {
+        network  = "regtest"
+        replicas = 1
+        labels = {
+            env = "regtest"
+        }
+    }
+}
+```
+
+`z3_instance_types` and `z3_data_disk_sizes` provide per-network defaults. Each `z3_deployments` entry can still override `instance_type` or `data_disk_size` directly when a specific deployment needs something different.
 
 A decription of each of the different types of infrastructure available follows:
 
@@ -102,7 +145,7 @@ A decription of each of the different types of infrastructure available follows:
 * zcashd-fullnode: a Zcashd full node which connects via Tor to other publicly reachable Zcashd nodes.  Note that inbound connections from other Tor nodes to a hidden service address is not presently enabled due to lack of support for v3 onion addresses. Fullnodes ordinarily *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.  The zcashd-fullnode accepts incoming connections on tcp/8233, but *only from the private VPC network*.
 * zcashd-privatenode: a Zcashd full node which connects via the non-routable private VPC network to the zcashd-fullnode, and is not directly exposed to the Internet.  privatenodes ordinarly *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.
 * zebrad-archivenode: a [Zebrad](https://github.com/ZcashFoundation/zebra) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zebrad-archivenode also stops zebrad at regularly scheduled intervals in order to backup the chaindata (32GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.
-* z3: a Docker-based [Z3](https://github.com/zcashfoundation/z3) host that installs Docker Engine, clones the z3 repo, installs `rage`, mounts a dedicated persistent disk for Zebra chain data, builds the required images, and starts Zebra first so it can complete its initial sync before the rest of the stack is brought up. It can optionally install a Rust toolchain for the `z3` app user via `z3_install_rust_toolchain=true`.
+* z3: a Docker-based [Z3](https://github.com/zcashfoundation/z3) host that installs Docker Engine, clones the z3 repo, installs `rage`, mounts a dedicated persistent disk for Zebra chain data, builds the required images, and starts Zebra first so it can complete its initial sync before the rest of the stack is brought up. It can optionally install a Rust toolchain for the `z3` app user via `z3_install_rust_toolchain=true`. Multiple named z3 deployments can be declared through `z3_deployments`, with per-deployment network selection, labels, instance naming, and firewall behavior. Mainnet uses public P2P port `8233`, testnet uses `18233`, and regtest remains private by default.
 
 
 ## Warning

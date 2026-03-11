@@ -5,11 +5,18 @@ set -euo pipefail
 set -x
 
 # Injected by Terraform
+STARTUP_STATE_DIR="/var/lib/zcashd-archivenode-startup"
+PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
 
 # Add a logging function
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
 }
+
+if [ -f "$PROVISIONING_COMPLETE_MARKER" ]; then
+  log "Startup provisioning already completed; skipping"
+  exit 0
+fi
 
 log "Starting node initialization"
 
@@ -374,3 +381,7 @@ else
   log "Note that chaindata from GCS via rsync may be more fresh, and can be restored by running /root/restore_rsync.sh"
   /root/restore.sh
 fi
+
+mkdir -p "$STARTUP_STATE_DIR"
+touch "$PROVISIONING_COMPLETE_MARKER"
+log "Archive node initialization complete"

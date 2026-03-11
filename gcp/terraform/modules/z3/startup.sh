@@ -14,9 +14,23 @@ DATA_MOUNT_PATH="${z3_mount_path}"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 DOCKER_CONFIG_DIR="/etc/apt/keyrings"
 INSTALL_RUST_TOOLCHAIN="${install_rust_toolchain}"
+STARTUP_STATE_DIR="/var/lib/z3-startup"
+PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+skip_if_already_initialized() {
+    if [ -f "$PROVISIONING_COMPLETE_MARKER" ]; then
+        log "Startup provisioning already completed; skipping"
+        exit 0
+    fi
+}
+
+mark_initialization_complete() {
+    mkdir -p "$STARTUP_STATE_DIR"
+    touch "$PROVISIONING_COMPLETE_MARKER"
 }
 
 ensure_user() {
@@ -301,13 +315,24 @@ configure_repo() {
 
     mkdir -p config/tls
 
-    if [ "${z3_network}" = "main" ]; then
-        network_name="Mainnet"
-        zallet_network="main"
-    else
-        network_name="Testnet"
-        zallet_network="test"
-    fi
+    case "${z3_network}" in
+        mainnet)
+            network_name="Mainnet"
+            zallet_network="main"
+            ;;
+        testnet)
+            network_name="Testnet"
+            zallet_network="test"
+            ;;
+        regtest)
+            network_name="Regtest"
+            zallet_network="regtest"
+            ;;
+        *)
+            log "Unsupported z3 network: ${z3_network}"
+            exit 1
+            ;;
+    esac
 
     ensure_env_var "NETWORK_NAME" "$network_name"
     ensure_env_var "Z3_ZEBRA_DATA_PATH" "$DATA_MOUNT_PATH"
@@ -401,6 +426,7 @@ EOF
 }
 
 log "Starting z3 host initialization for project ${gcloud_project}"
+skip_if_already_initialized
 install_base_packages
 install_tmux_config
 install_global_bash_aliases
@@ -415,4 +441,5 @@ configure_repo
 #build_required_images
 # uncomment above ot use local build instead of pulling from registry - requires docker buildx to be installed
 install_runtime_helpers
+mark_initialization_complete
 log "z3 host initialization complete"

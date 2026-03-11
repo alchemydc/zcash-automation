@@ -5,12 +5,54 @@ provider "google" {
 }
 
 locals {
-  zcashd_fullnode_enabled     = var.replicas["zcashd-fullnode"] > 0
-  zcashd_privatenode_enabled  = var.replicas["zcashd-privatenode"] > 0
-  zcashd_archivenode_enabled  = var.replicas["zcashd-archivenode"] > 0
-  zebrad_archivenode_enabled  = var.replicas["zebrad-archivenode"] > 0
-  z3_enabled                  = var.replicas["z3"] > 0
-  z3_public_p2p_port          = lookup({ mainnet = "8233", testnet = "18232" }, var.z3_network, null)
+  zcashd_fullnode_enabled    = var.replicas["zcashd-fullnode"] > 0
+  zcashd_privatenode_enabled = var.replicas["zcashd-privatenode"] > 0
+  zcashd_archivenode_enabled = var.replicas["zcashd-archivenode"] > 0
+  zebrad_archivenode_enabled = var.replicas["zebrad-archivenode"] > 0
+  z3_network_ports = {
+    mainnet = 8233
+    testnet = 18233
+    regtest = null
+  }
+  z3_instance_types_by_network = merge({
+    mainnet = var.instance_types["z3"]
+    testnet = var.instance_types["z3"]
+    regtest = var.instance_types["z3"]
+  }, var.z3_instance_types)
+  z3_data_disk_sizes_by_network = merge({
+    mainnet = var.z3_data_disk_size
+    testnet = var.z3_data_disk_size
+    regtest = var.z3_data_disk_size
+  }, var.z3_data_disk_sizes)
+  z3_deployments = {
+    for deployment_name, deployment in var.z3_deployments : deployment_name => {
+      deployment_id = trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")
+      hostname_prefix = trim(
+        replace(replace(replace(lower(coalesce(try(deployment.hostname_prefix, null), format("z3-%s", deployment_name))), "_", "-"), ".", "-"), " ", "-"),
+        "-"
+      )
+      network        = deployment.network
+      replicas       = deployment.replicas
+      instance_type  = coalesce(try(deployment.instance_type, null), local.z3_instance_types_by_network[deployment.network])
+      boot_disk_size = coalesce(try(deployment.boot_disk_size, null), var.z3_boot_disk_size)
+      data_disk_name = coalesce(try(deployment.data_disk_name, null), format("%s-%s", var.z3_data_disk_name, trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")))
+      data_disk_size = coalesce(try(deployment.data_disk_size, null), local.z3_data_disk_sizes_by_network[deployment.network])
+      data_disk_type = coalesce(try(deployment.data_disk_type, null), var.z3_data_disk_type)
+      labels = merge(coalesce(try(deployment.labels, null), {}), {
+        role       = "z3"
+        deployment = trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")
+        network    = deployment.network
+      })
+      network_tags = distinct(concat([
+        "z3",
+        format("z3-%s", deployment.network),
+        format("z3-%s", trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")),
+      ], coalesce(try(deployment.additional_tags, null), [])))
+      expose_p2p_public = deployment.network == "regtest" ? false : coalesce(try(deployment.expose_p2p_public, null), true)
+      public_p2p_port   = lookup(local.z3_network_ports, deployment.network, null)
+    }
+    if try(deployment.enabled, true) && deployment.replicas > 0
+  }
 }
 
 resource "google_project_service" "compute" {
@@ -112,17 +154,17 @@ resource "google_compute_firewall" "zcashd_private" {
 }
 
 resource "google_compute_firewall" "z3" {
-  count      = local.z3_public_p2p_port != null ? 1 : 0
-  name       = "z3-firewall"
+  for_each   = { for name, deployment in local.z3_deployments : name => deployment if deployment.expose_p2p_public && deployment.public_p2p_port != null }
+  name       = format("z3-%s-firewall", each.value.deployment_id)
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
-  target_tags   = ["z3"]
+  target_tags   = [format("z3-%s", each.value.deployment_id)]
   source_ranges = ["0.0.0.0/0"]
 
   allow {
     protocol = "tcp"
-    ports    = [local.z3_public_p2p_port]
+    ports    = [tostring(each.value.public_p2p_port)]
   }
 }
 
@@ -213,8 +255,8 @@ module "zebrad-archivenode" {
 }
 
 module "z3" {
-  count  = local.z3_enabled ? 1 : 0
-  source = "./modules/z3"
+  for_each = local.z3_deployments
+  source   = "./modules/z3"
   # variables
   project                     = var.project
   network_name                = var.network_name
@@ -222,17 +264,21 @@ module "z3" {
   region                      = var.region
   zone                        = var.zone
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  instance_count              = var.replicas["z3"]
-  instance_type               = var.instance_types["z3"]
-  boot_disk_size              = var.z3_boot_disk_size
-  data_disk_name              = var.z3_data_disk_name
-  data_disk_size              = var.z3_data_disk_size
-  data_disk_type              = var.z3_data_disk_type
+  deployment_name             = each.value.deployment_id
+  hostname_prefix             = each.value.hostname_prefix
+  labels                      = each.value.labels
+  network_tags                = each.value.network_tags
+  instance_count              = each.value.replicas
+  instance_type               = each.value.instance_type
+  boot_disk_size              = each.value.boot_disk_size
+  data_disk_name              = each.value.data_disk_name
+  data_disk_size              = each.value.data_disk_size
+  data_disk_type              = each.value.data_disk_type
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
   z3_repo_url                 = var.z3_repo_url
   z3_repo_ref                 = var.z3_repo_ref
-  z3_network                  = var.z3_network
+  z3_network                  = each.value.network
   z3_mount_path               = var.z3_mount_path
   install_rust_toolchain      = var.z3_install_rust_toolchain
   depends_on                  = [google_compute_network.zcash_network]

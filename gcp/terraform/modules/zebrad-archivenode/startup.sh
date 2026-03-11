@@ -2,10 +2,18 @@
 set -euo pipefail
 set -x
 
+STARTUP_STATE_DIR="/var/lib/zebrad-archivenode-startup"
+PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
+
 # Add a logging function
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
 }
+
+if [ -f "$PROVISIONING_COMPLETE_MARKER" ]; then
+  log "Startup provisioning already completed; skipping"
+  exit 0
+fi
 
 log "Starting zebra node initialization"
 
@@ -375,3 +383,7 @@ chown -R zebra:zebra /home/zebra
 
 log "Starting zebrad"
 systemctl start zebrad
+
+mkdir -p "$STARTUP_STATE_DIR"
+touch "$PROVISIONING_COMPLETE_MARKER"
+log "Zebrad archive node initialization complete"

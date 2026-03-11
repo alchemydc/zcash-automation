@@ -1,0 +1,79 @@
+# project, region, zone, and GCP_DEFAULT_SERVICE_ACCOUNT are sourced from gcloud.env
+# via TF_VAR_* exports after running: source gcloud.env
+
+# Optional global z3 settings
+z3_repo_ref               = "dev"
+z3_install_rust_toolchain = true
+z3_boot_disk_size         = 50
+z3_data_disk_type         = "pd-standard"
+
+# Default z3 sizing by blockchain network. Individual deployments can still
+# override instance_type and data_disk_size directly if needed.
+z3_instance_types = {
+  mainnet = "e2-standard-8"
+  testnet = "e2-standard-4"
+  regtest = "e2-standard-2"
+}
+
+z3_data_disk_sizes = {
+  mainnet = 200
+  testnet = 50
+  regtest = 10
+}
+
+# Keep other node types disabled (defaults are already 0, included here for clarity)
+replicas = {
+  zcashd-archivenode = 0
+  zcashd-fullnode    = 0
+  zcashd-privatenode = 0
+  zebrad-archivenode = 0
+}
+
+instance_types = {
+  zcashd-archivenode = "e2-standard-4"
+  zcashd-fullnode    = "n1-standard-2"
+  zcashd-privatenode = "n1-standard-2"
+  zebrad-archivenode = "e2-standard-4"
+  z3                 = "e2-standard-4"
+}
+
+z3_deployments = {
+  mainnet = {
+    network         = "mainnet"
+    replicas        = 1
+    hostname_prefix = "z3-mainnet"
+    labels = {
+      env   = "mainnet"
+      stack = "z3"
+      owner = "infra"
+    }
+    # Optional; defaults to true for mainnet
+    expose_p2p_public = true
+  }
+
+  testnet = {
+    network         = "testnet"
+    replicas        = 1
+    hostname_prefix = "z3-testnet"
+    labels = {
+      env   = "testnet"
+      stack = "z3"
+      owner = "infra"
+    }
+    # Optional; defaults to true for testnet (port 18233)
+    expose_p2p_public = true
+  }
+
+  regtest = {
+    network         = "regtest"
+    replicas        = 1
+    hostname_prefix = "z3-regtest"
+    labels = {
+      env   = "regtest"
+      stack = "z3"
+      owner = "infra"
+    }
+    # Explicit for readability; regtest is forced private anyway
+    expose_p2p_public = false
+  }
+}
