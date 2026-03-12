@@ -13,6 +13,8 @@ APP_USER="z3"
 DATA_MOUNT_PATH="${z3_mount_path}"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 DOCKER_CONFIG_DIR="/etc/apt/keyrings"
+DOCKER_DAEMON_DIR="/etc/docker"
+DOCKER_DAEMON_CONFIG_FILE="$DOCKER_DAEMON_DIR/daemon.json"
 INSTALL_RUST_TOOLCHAIN="${install_rust_toolchain}"
 STARTUP_STATE_DIR="/var/lib/z3-startup"
 PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
@@ -172,32 +174,58 @@ install_ops_agent() {
     bash /tmp/add-google-cloud-ops-agent-repo.sh --also-install
 }
 
+configure_docker_daemon() {
+    local tmp_config
+
+    log "Configuring Docker daemon logging driver"
+    install -m 0755 -d "$DOCKER_DAEMON_DIR"
+
+    tmp_config="$(mktemp)"
+    if [ -f "$DOCKER_DAEMON_CONFIG_FILE" ]; then
+        jq '. + {"log-driver": "journald"}' "$DOCKER_DAEMON_CONFIG_FILE" > "$tmp_config"
+    else
+        cat <<'EOF' > "$tmp_config"
+{
+  "log-driver": "journald"
+}
+EOF
+    fi
+
+    install -m 0644 "$tmp_config" "$DOCKER_DAEMON_CONFIG_FILE"
+    rm -f "$tmp_config"
+}
+
 install_docker() {
     if command -v docker >/dev/null 2>&1; then
         log "Docker already installed"
-        return
+    else
+        log "Installing Docker Engine"
+        install -m 0755 -d "$DOCKER_CONFIG_DIR"
+        curl -fsSL https://download.docker.com/linux/debian/gpg -o "$DOCKER_CONFIG_DIR/docker.asc"
+        chmod a+r "$DOCKER_CONFIG_DIR/docker.asc"
+
+        echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=$${DOCKER_CONFIG_DIR}/docker.asc] https://download.docker.com/linux/debian \
+            $(. /etc/os-release && echo "$${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+        apt-get update
+        apt-get install -y \
+            containerd.io \
+            docker-buildx-plugin \
+            docker-ce \
+            docker-ce-cli \
+            docker-compose-plugin
     fi
 
-    log "Installing Docker Engine"
-    install -m 0755 -d "$DOCKER_CONFIG_DIR"
-    curl -fsSL https://download.docker.com/linux/debian/gpg -o "$DOCKER_CONFIG_DIR/docker.asc"
-    chmod a+r "$DOCKER_CONFIG_DIR/docker.asc"
-
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=$${DOCKER_CONFIG_DIR}/docker.asc] https://download.docker.com/linux/debian \
-        $(. /etc/os-release && echo "$${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null
-
-    apt-get update
-    apt-get install -y \
-        containerd.io \
-        docker-buildx-plugin \
-        docker-ce \
-        docker-ce-cli \
-        docker-compose-plugin
-
+    configure_docker_daemon
     systemctl enable docker.service
     systemctl enable containerd.service
-    systemctl start docker.service
+
+    if systemctl is-active --quiet docker.service; then
+        systemctl restart docker.service
+    else
+        systemctl start docker.service
+    fi
 }
 
 ensure_data_disk() {
@@ -366,25 +394,19 @@ build_required_images() {
 install_runtime_helpers() {
     log "Installing runtime helper scripts and systemd services"
 
-    cat <<'EOF' > /usr/local/bin/z3-check-zebra-readiness
-#!/bin/bash
-set -euo pipefail
-cd /opt/z3
-exec ./check-zebra-readiness.sh
-EOF
-    chmod 0755 /usr/local/bin/z3-check-zebra-readiness
-
     cat <<'EOF' > /usr/local/bin/z3-start-full-stack
 #!/bin/bash
 set -euo pipefail
 cd /opt/z3
-exec docker compose up -d
+exec docker compose --profile monitoring up -d
 EOF
     chmod 0755 /usr/local/bin/z3-start-full-stack
 
-    cat <<'EOF' > /etc/systemd/system/z3-zebra.service
+    rm -f /etc/systemd/system/z3-zebra.service /etc/systemd/system/z3-stack.service
+
+    cat <<'EOF' > /etc/systemd/system/z3.service
 [Unit]
-Description=Z3 Zebra initial sync phase
+Description=Z3 stack
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -393,26 +415,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/z3
-ExecStart=/usr/bin/docker compose up -d zebra
-ExecStop=/usr/bin/docker compose stop zebra
-TimeoutStartSec=0
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    cat <<'EOF' > /etc/systemd/system/z3-stack.service
-[Unit]
-Description=Z3 full stack
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/z3
-ExecStart=/usr/bin/docker compose up -d
+ExecStart=/usr/local/bin/z3-start-full-stack
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
 
@@ -421,8 +424,8 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable z3-zebra.service
-    systemctl start z3-zebra.service
+    systemctl enable z3.service
+    systemctl start z3.service
 }
 
 log "Starting z3 host initialization for project ${gcloud_project}"
