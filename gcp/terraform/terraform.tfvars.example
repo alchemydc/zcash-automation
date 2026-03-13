@@ -6,6 +6,9 @@ z3_repo_ref               = "dev"
 z3_install_rust_toolchain = true
 z3_boot_disk_size         = 50
 z3_data_disk_type         = "pd-standard"
+z3_snapshot_timer_on_calendar = "Sun *-*-* 04:20:00"
+z3_snapshot_retention_count   = 7
+z3_restore_from_latest_snapshot = true
 
 # Default z3 sizing by blockchain network. Individual deployments can still
 # override instance_type and data_disk_size directly if needed.
@@ -42,6 +45,7 @@ z3_deployments = {
     network         = "mainnet"
     replicas        = 1
     hostname_prefix = "z3-mainnet"
+    snapshot_enabled = true
     labels = {
       env   = "mainnet"
       stack = "z3"
@@ -55,6 +59,7 @@ z3_deployments = {
     network         = "testnet"
     replicas        = 1
     hostname_prefix = "z3-testnet"
+    snapshot_enabled = true
     labels = {
       env   = "testnet"
       stack = "z3"
@@ -68,6 +73,7 @@ z3_deployments = {
     network         = "regtest"
     replicas        = 1
     hostname_prefix = "z3-regtest"
+    snapshot_enabled = false
     labels = {
       env   = "regtest"
       stack = "z3"

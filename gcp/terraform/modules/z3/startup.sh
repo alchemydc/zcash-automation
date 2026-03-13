@@ -12,10 +12,14 @@ APP_DIR="/opt/z3"
 APP_USER="z3"
 DATA_MOUNT_PATH="${z3_mount_path}"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
+DEPLOYMENT_NAME="${deployment_name}"
 DOCKER_CONFIG_DIR="/etc/apt/keyrings"
 DOCKER_DAEMON_DIR="/etc/docker"
 DOCKER_DAEMON_CONFIG_FILE="$DOCKER_DAEMON_DIR/daemon.json"
 INSTALL_RUST_TOOLCHAIN="${install_rust_toolchain}"
+SNAPSHOT_ENABLED="${snapshot_enabled}"
+SNAPSHOT_RETENTION_COUNT="${snapshot_retention_count}"
+SNAPSHOT_TIMER_ON_CALENDAR="${snapshot_timer_on_calendar}"
 STARTUP_STATE_DIR="/var/lib/z3-startup"
 PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
 
@@ -416,7 +420,7 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/z3
 ExecStart=/usr/local/bin/z3-start-full-stack
-ExecStop=/usr/bin/docker compose down
+ExecStop=/usr/bin/docker compose --profile monitoring down
 TimeoutStartSec=0
 
 [Install]
@@ -426,6 +430,196 @@ EOF
     systemctl daemon-reload
     systemctl enable z3.service
     systemctl start z3.service
+}
+
+install_snapshot_tooling() {
+    log "Installing snapshot helper scripts and systemd timer"
+
+    cat <<'EOF' > /usr/local/bin/z3-create-data-snapshot
+#!/bin/bash
+set -euo pipefail
+
+export PATH="/usr/local/bin:/usr/bin:/bin"
+
+APP_DIR="/opt/z3"
+PROJECT_ID="${gcloud_project}"
+DATA_DISK_NAME="${data_disk_name}"
+DEPLOYMENT_NAME="${deployment_name}"
+NETWORK_NAME="${z3_network}"
+RETENTION_COUNT="${snapshot_retention_count}"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+metadata_get() {
+    curl -fsSL -H 'Metadata-Flavor: Google' "http://169.254.169.254/computeMetadata/v1/$1"
+}
+
+get_access_token() {
+    metadata_get 'instance/service-accounts/default/token' | jq -r '.access_token'
+}
+
+wait_for_global_operation() {
+    local operation_name="$1"
+    local operation_json
+
+    while true; do
+        operation_json="$(curl -fsSL \
+            -H "Authorization: Bearer $(get_access_token)" \
+            -H 'Content-Type: application/json' \
+            "https://compute.googleapis.com/compute/v1/projects/$${PROJECT_ID}/global/operations/$${operation_name}")"
+
+        if [ "$(printf '%s' "$operation_json" | jq -r '.status')" = "DONE" ]; then
+            if [ "$(printf '%s' "$operation_json" | jq '.error.errors | length // 0')" != "0" ]; then
+                printf '%s\n' "$operation_json" | jq -r '.error.errors[]?.message'
+                return 1
+            fi
+
+            return 0
+        fi
+
+        sleep 5
+    done
+}
+
+stop_zebra() {
+    log "Stopping zebra container"
+    cd "$APP_DIR"
+    docker compose stop zebra
+}
+
+start_zebra() {
+    log "Starting zebra container"
+    cd "$APP_DIR"
+    docker compose start zebra
+}
+
+prune_old_snapshots() {
+    local snapshots_json
+    local snapshot_name
+
+    if [ "$RETENTION_COUNT" -le 0 ]; then
+        return
+    fi
+
+    snapshots_json="$(curl -fsSL \
+        -H "Authorization: Bearer $(get_access_token)" \
+        -G \
+        --data-urlencode 'maxResults=500' \
+        "https://compute.googleapis.com/compute/v1/projects/$${PROJECT_ID}/global/snapshots")"
+
+    while IFS= read -r snapshot_name; do
+        [ -n "$snapshot_name" ] || continue
+        log "Deleting old snapshot $snapshot_name"
+        wait_for_global_operation "$(curl -fsSL \
+            -H "Authorization: Bearer $(get_access_token)" \
+            -X DELETE \
+            "https://compute.googleapis.com/compute/v1/projects/$${PROJECT_ID}/global/snapshots/$${snapshot_name}" | jq -r '.name')"
+    done < <(
+        printf '%s' "$snapshots_json" | jq -r \
+            --arg deployment "$DEPLOYMENT_NAME" \
+            --arg network "$NETWORK_NAME" \
+            --arg disk_name "$DATA_DISK_NAME" \
+            --argjson retention_count "$RETENTION_COUNT" '
+                .items // []
+                | map(select(.labels.stack == "z3" and .labels.deployment == $deployment and .labels.network == $network and .labels.role == "zebra-data" and .labels.source_disk == $disk_name))
+                | sort_by(.creationTimestamp)
+                | reverse
+                | .[$retention_count:][]?.name
+            '
+    )
+}
+
+main() {
+    local zone
+    local instance_name
+    local timestamp
+    local snapshot_prefix
+    local max_prefix_length
+    local snapshot_name
+    local request_body
+    local operation_name
+
+    zone="$(basename "$(metadata_get 'instance/zone')")"
+    instance_name="$(metadata_get 'instance/name')"
+    timestamp="$(date -u '+%Y%m%d%H%M%S')"
+    snapshot_prefix="z3-$${DEPLOYMENT_NAME}-$${instance_name##*-}"
+    max_prefix_length=$((63 - $${#timestamp} - 1))
+    snapshot_prefix="$${snapshot_prefix:0:$max_prefix_length}"
+    snapshot_name="$${snapshot_prefix}-$${timestamp}"
+
+    request_body="$(jq -n \
+        --arg name "$snapshot_name" \
+        --arg source_disk "projects/$${PROJECT_ID}/zones/$${zone}/disks/$${DATA_DISK_NAME}" \
+        --arg deployment "$DEPLOYMENT_NAME" \
+        --arg network "$NETWORK_NAME" \
+        --arg disk_name "$DATA_DISK_NAME" \
+        --arg instance_name "$instance_name" \
+        '{
+            name: $name,
+            sourceDisk: $source_disk,
+            labels: {
+                stack: "z3",
+                deployment: $deployment,
+                network: $network,
+                role: "zebra-data",
+                source_disk: $disk_name,
+                instance: $instance_name,
+                managed_by: "terraform"
+            }
+        }')"
+
+    stop_zebra
+    trap start_zebra EXIT
+
+    log "Creating snapshot $snapshot_name for $DATA_DISK_NAME"
+    operation_name="$(curl -fsSL \
+        -H "Authorization: Bearer $(get_access_token)" \
+        -H 'Content-Type: application/json' \
+        -X POST \
+        -d "$request_body" \
+        "https://compute.googleapis.com/compute/v1/projects/$${PROJECT_ID}/global/snapshots" | jq -r '.name')"
+    wait_for_global_operation "$operation_name"
+    prune_old_snapshots
+    log "Snapshot $snapshot_name created successfully"
+}
+
+main "$@"
+EOF
+    chmod 0755 /usr/local/bin/z3-create-data-snapshot
+
+    cat <<'EOF' > /etc/systemd/system/z3-data-snapshot.service
+[Unit]
+Description=Create Z3 Zebra data snapshot
+After=network-online.target docker.service z3.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/z3-create-data-snapshot
+EOF
+
+    cat <<EOF > /etc/systemd/system/z3-data-snapshot.timer
+[Unit]
+Description=Run Z3 Zebra data snapshots on a schedule
+
+[Timer]
+OnCalendar=${snapshot_timer_on_calendar}
+Persistent=true
+Unit=z3-data-snapshot.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+
+    if [ "$SNAPSHOT_ENABLED" = "true" ]; then
+        systemctl enable --now z3-data-snapshot.timer
+    else
+        systemctl disable --now z3-data-snapshot.timer >/dev/null 2>&1 || true
+    fi
 }
 
 log "Starting z3 host initialization for project ${gcloud_project}"
@@ -444,5 +638,6 @@ configure_repo
 #build_required_images
 # uncomment above ot use local build instead of pulling from registry - requires docker buildx to be installed
 install_runtime_helpers
+install_snapshot_tooling
 mark_initialization_complete
 log "z3 host initialization complete"

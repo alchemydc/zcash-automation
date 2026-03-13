@@ -216,7 +216,9 @@ ensure_default_compute_service_account() {
     local project_number
     local default_compute_sa
     local role
+    # compute.storageAdmin is needed for creating snapshots from disks. todo: reduce permissions
     local compute_roles=(
+        "roles/compute.storageAdmin"
         "roles/logging.logWriter"
         "roles/monitoring.metricWriter"
     )

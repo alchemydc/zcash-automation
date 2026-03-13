@@ -113,3 +113,27 @@ variable "install_rust_toolchain" {
   description = "Whether to install rustup/cargo for the z3 app user"
   default     = true
 }
+
+variable "snapshot_enabled" {
+  type        = bool
+  description = "Whether to install and enable periodic z3 data snapshot tooling on the host"
+  default     = true
+}
+
+variable "snapshot_retention_count" {
+  type        = number
+  description = "Number of z3 data snapshots to retain for this host"
+  default     = 7
+}
+
+variable "snapshot_timer_on_calendar" {
+  type        = string
+  description = "systemd OnCalendar expression for periodic z3 data snapshots"
+  default     = "Sun *-*-* 04:20:00"
+}
+
+variable "restore_from_latest_snapshot" {
+  type        = bool
+  description = "Whether to create z3 data disks from the latest matching snapshot when available"
+  default     = true
+}

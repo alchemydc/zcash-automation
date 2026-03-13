@@ -125,18 +125,22 @@ variable "z3_repo_ref" {
 variable "z3_deployments" {
   description = "Named z3 deployment groups. Each deployment can target its own network, replicas, labels, and ingress policy, with optional per-deployment overrides for compute and storage sizing."
   type = map(object({
-    enabled           = optional(bool, true)
-    network           = string
-    replicas          = number
-    instance_type     = optional(string)
-    boot_disk_size    = optional(number)
-    data_disk_name    = optional(string)
-    data_disk_size    = optional(number)
-    data_disk_type    = optional(string)
-    hostname_prefix   = optional(string)
-    labels            = optional(map(string), {})
-    expose_p2p_public = optional(bool)
-    additional_tags   = optional(list(string), [])
+    enabled                      = optional(bool, true)
+    network                      = string
+    replicas                     = number
+    instance_type                = optional(string)
+    boot_disk_size               = optional(number)
+    data_disk_name               = optional(string)
+    data_disk_size               = optional(number)
+    data_disk_type               = optional(string)
+    hostname_prefix              = optional(string)
+    labels                       = optional(map(string), {})
+    expose_p2p_public            = optional(bool)
+    additional_tags              = optional(list(string), [])
+    snapshot_enabled             = optional(bool)
+    snapshot_retention_count     = optional(number)
+    snapshot_timer_on_calendar   = optional(string)
+    restore_from_latest_snapshot = optional(bool)
   }))
   default = {}
 
@@ -208,4 +212,22 @@ variable "z3_install_rust_toolchain" {
   description = "Whether to install rustup/cargo for the z3 app user"
   type        = bool
   default     = false
+}
+
+variable "z3_snapshot_timer_on_calendar" {
+  description = "Default systemd OnCalendar schedule for z3 data snapshots"
+  type        = string
+  default     = "Sun *-*-* 04:20:00"
+}
+
+variable "z3_snapshot_retention_count" {
+  description = "Default number of z3 data snapshots to retain per deployment host"
+  type        = number
+  default     = 7
+}
+
+variable "z3_restore_from_latest_snapshot" {
+  description = "Whether z3 data disks should restore from the latest matching snapshot when one exists"
+  type        = bool
+  default     = true
 }

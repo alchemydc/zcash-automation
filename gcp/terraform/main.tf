@@ -38,6 +38,22 @@ locals {
       data_disk_name = coalesce(try(deployment.data_disk_name, null), format("%s-%s", var.z3_data_disk_name, trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")))
       data_disk_size = coalesce(try(deployment.data_disk_size, null), local.z3_data_disk_sizes_by_network[deployment.network])
       data_disk_type = coalesce(try(deployment.data_disk_type, null), var.z3_data_disk_type)
+      snapshot_enabled = coalesce(
+        try(deployment.snapshot_enabled, null),
+        deployment.network != "regtest"
+      )
+      snapshot_retention_count = coalesce(
+        try(deployment.snapshot_retention_count, null),
+        var.z3_snapshot_retention_count
+      )
+      snapshot_timer_on_calendar = coalesce(
+        try(deployment.snapshot_timer_on_calendar, null),
+        var.z3_snapshot_timer_on_calendar
+      )
+      restore_from_latest_snapshot = coalesce(
+        try(deployment.restore_from_latest_snapshot, null),
+        deployment.network == "regtest" ? false : var.z3_restore_from_latest_snapshot
+      )
       labels = merge(coalesce(try(deployment.labels, null), {}), {
         role       = "z3"
         deployment = trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")
@@ -258,30 +274,34 @@ module "z3" {
   for_each = local.z3_deployments
   source   = "./modules/z3"
   # variables
-  project                     = var.project
-  network_name                = var.network_name
-  service_account_scopes      = var.service_account_scopes
-  region                      = var.region
-  zone                        = var.zone
-  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  deployment_name             = each.value.deployment_id
-  hostname_prefix             = each.value.hostname_prefix
-  labels                      = each.value.labels
-  network_tags                = each.value.network_tags
-  instance_count              = each.value.replicas
-  instance_type               = each.value.instance_type
-  boot_disk_size              = each.value.boot_disk_size
-  data_disk_name              = each.value.data_disk_name
-  data_disk_size              = each.value.data_disk_size
-  data_disk_type              = each.value.data_disk_type
-  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
-  os_image                    = var.os_image
-  z3_repo_url                 = var.z3_repo_url
-  z3_repo_ref                 = var.z3_repo_ref
-  z3_network                  = each.value.network
-  z3_mount_path               = var.z3_mount_path
-  install_rust_toolchain      = var.z3_install_rust_toolchain
-  depends_on                  = [google_compute_network.zcash_network]
+  project                      = var.project
+  network_name                 = var.network_name
+  service_account_scopes       = var.service_account_scopes
+  region                       = var.region
+  zone                         = var.zone
+  GCP_DEFAULT_SERVICE_ACCOUNT  = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  deployment_name              = each.value.deployment_id
+  hostname_prefix              = each.value.hostname_prefix
+  labels                       = each.value.labels
+  network_tags                 = each.value.network_tags
+  instance_count               = each.value.replicas
+  instance_type                = each.value.instance_type
+  boot_disk_size               = each.value.boot_disk_size
+  data_disk_name               = each.value.data_disk_name
+  data_disk_size               = each.value.data_disk_size
+  data_disk_type               = each.value.data_disk_type
+  subnetwork                   = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                     = var.os_image
+  z3_repo_url                  = var.z3_repo_url
+  z3_repo_ref                  = var.z3_repo_ref
+  z3_network                   = each.value.network
+  z3_mount_path                = var.z3_mount_path
+  install_rust_toolchain       = var.z3_install_rust_toolchain
+  snapshot_enabled             = each.value.snapshot_enabled
+  snapshot_retention_count     = each.value.snapshot_retention_count
+  snapshot_timer_on_calendar   = each.value.snapshot_timer_on_calendar
+  restore_from_latest_snapshot = each.value.restore_from_latest_snapshot
+  depends_on                   = [google_compute_network.zcash_network]
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {
