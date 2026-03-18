@@ -1,6 +1,18 @@
 # project, region, zone, and GCP_DEFAULT_SERVICE_ACCOUNT are sourced from gcloud.env
 # via TF_VAR_* exports after running: source gcloud.env
 
+# --- Vote Validator ---
+# Set TF_VAR_vote_validator_tailscale_auth_key in your environment before applying.
+# Use a short-lived, single-use Tailscale auth key.
+vote_validator_enabled         = true
+vote_validator_hostname_prefix = "zcash-vote-validator"
+vote_validator_instance_type   = "e2-standard-2"
+vote_validator_instance_count  = 1
+vote_validator_boot_disk_size  = 20
+vote_validator_tailscale_auth_key = "tskey-auth-XXXXXXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# --- Z3 ---
+
 # Optional global z3 settings
 z3_repo_ref               = "dev"
 z3_install_rust_toolchain = true
