@@ -140,6 +140,22 @@ resource "google_compute_firewall" "sshd_z3_iap" {
   }
 }
 
+# Only allow SSH to vote validator instances through IAP TCP forwarding.
+resource "google_compute_firewall" "sshd_vote_validator_iap" {
+  count      = var.vote_validator_enabled ? 1 : 0
+  name       = "sshd-vote-validator-iap-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zcash-vote-validator"]
+  source_ranges = ["35.235.240.0/20"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
 # Update the zcashd firewall rule to allow public P2P connections
 resource "google_compute_firewall" "zcashd" {
   name       = "zcashd-firewall"
@@ -302,6 +318,34 @@ module "z3" {
   snapshot_timer_on_calendar   = each.value.snapshot_timer_on_calendar
   restore_from_latest_snapshot = each.value.restore_from_latest_snapshot
   depends_on                   = [google_compute_network.zcash_network]
+}
+
+module "zcash-vote-validator" {
+  count  = var.vote_validator_enabled ? 1 : 0
+  source = "./modules/zcash-vote-validator"
+
+  project                     = var.project
+  region                      = var.region
+  zone                        = var.zone
+  network_name                = var.network_name
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  service_account_scopes      = var.service_account_scopes
+  os_image                    = var.os_image
+  hostname_prefix             = var.vote_validator_hostname_prefix
+  instance_type               = var.vote_validator_instance_type
+  instance_count              = var.vote_validator_instance_count
+  boot_disk_size              = var.vote_validator_boot_disk_size
+  seed                        = var.vote_validator_seed
+  genesis_url                 = var.vote_validator_genesis_url
+  zcv_release_tag             = var.vote_validator_zcv_release_tag
+  tailscale_auth_key          = var.vote_validator_tailscale_auth_key
+  labels = {
+    role  = "vote-validator"
+    stack = "zcash-vote"
+  }
+
+  depends_on = [google_compute_network.zcash_network]
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {

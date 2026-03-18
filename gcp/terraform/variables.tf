@@ -110,6 +110,65 @@ variable "zebra_release_tag" {
   default     = "v4.1.0"
 }
 
+# --- Vote Validator ---
+
+variable "vote_validator_enabled" {
+  description = "Whether to provision zcash vote validator instances"
+  type        = bool
+  default     = false
+}
+
+variable "vote_validator_hostname_prefix" {
+  description = "Instance naming prefix for vote validator hosts (also used as the Tailscale hostname)"
+  type        = string
+  default     = "zcash-vote-validator"
+}
+
+variable "vote_validator_instance_type" {
+  description = "The GCP instance type for vote validator nodes"
+  type        = string
+  default     = "e2-standard-2"
+}
+
+variable "vote_validator_instance_count" {
+  description = "Number of vote validator instances to provision"
+  type        = number
+  default     = 1
+}
+
+variable "vote_validator_boot_disk_size" {
+  description = "Size (in GB) of the vote validator boot disk"
+  type        = number
+  default     = 20
+}
+
+variable "vote_validator_seed" {
+  description = "CometBFT seed peer address for vote validators"
+  type        = string
+  default     = "1b158b43b004ca9a2ef810db4bffbd720c747fe1@100.104.174.21:26656"
+}
+
+variable "vote_validator_genesis_url" {
+  description = "URL to the CometBFT genesis.json for vote validators"
+  type        = string
+  default     = "https://tinyurl.com/y856k648"
+}
+
+variable "vote_validator_zcv_release_tag" {
+  description = "GitHub release tag for the zcv vote-cometbft binary"
+  type        = string
+  default     = "zcvlib-v0.5.0"
+}
+
+variable "vote_validator_tailscale_auth_key" {
+  description = "Tailscale auth key for vote validator instances to join the tailnet"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# --- Z3 ---
+
 variable "z3_repo_url" {
   description = "The z3 repository to clone on provisioned z3 hosts"
   type        = string
