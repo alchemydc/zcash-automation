@@ -146,7 +146,7 @@ install_go_tools() {
         export GOPATH="$HOME/go"
         export GOBIN="$GOPATH/bin"
         mkdir -p "$GOBIN"
-        go install github.com/cometbft/cometbft/cmd/cometbft@v0.38.17
+        go install github.com/cometbft/cometbft/cmd/cometbft@v0.38
         go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
     '
 

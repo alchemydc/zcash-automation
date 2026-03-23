@@ -1,5 +1,10 @@
+locals {
+  snapshot_enabled_effective       = var.z3_network == "regtest" ? false : var.snapshot_enabled
+  restore_from_latest_snapshot_effective = var.z3_network == "regtest" ? false : var.restore_from_latest_snapshot
+}
+
 data "external" "z3_restore_snapshot" {
-  count = var.restore_from_latest_snapshot ? var.instance_count : 0
+  count = local.restore_from_latest_snapshot_effective ? var.instance_count : 0
 
   program = [
     "bash",
@@ -14,11 +19,11 @@ data "external" "z3_restore_snapshot" {
 }
 
 locals {
-  z3_restore_snapshot_names = var.restore_from_latest_snapshot ? [
+  z3_restore_snapshot_names = local.restore_from_latest_snapshot_effective ? [
     for snapshot in data.external.z3_restore_snapshot : snapshot.result.snapshot_name
   ] : [for _ in range(var.instance_count) : ""]
 
-  z3_restore_snapshot_sizes_gb = var.restore_from_latest_snapshot ? [
+  z3_restore_snapshot_sizes_gb = local.restore_from_latest_snapshot_effective ? [
     for snapshot in data.external.z3_restore_snapshot : tonumber(snapshot.result.snapshot_size_gb)
   ] : [for _ in range(var.instance_count) : 0]
 }
@@ -46,6 +51,10 @@ resource "google_compute_disk" "z3_data" {
   size     = max(var.data_disk_size, local.z3_restore_snapshot_sizes_gb[count.index])
   snapshot = local.z3_restore_snapshot_names[count.index] != "" ? local.z3_restore_snapshot_names[count.index] : null
   labels   = var.labels
+
+  lifecycle {
+    ignore_changes = [snapshot]
+  }
 }
 
 resource "google_compute_instance" "z3" {
@@ -85,7 +94,7 @@ resource "google_compute_instance" "z3" {
       deployment_name            = var.deployment_name,
       gcloud_project             = var.project,
       install_rust_toolchain     = var.install_rust_toolchain,
-      snapshot_enabled           = tostring(var.snapshot_enabled),
+      snapshot_enabled           = tostring(local.snapshot_enabled_effective),
       snapshot_retention_count   = tostring(var.snapshot_retention_count),
       snapshot_timer_on_calendar = var.snapshot_timer_on_calendar,
       z3_mount_path              = var.z3_mount_path,

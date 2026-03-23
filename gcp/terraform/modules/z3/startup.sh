@@ -13,6 +13,7 @@ APP_USER="z3"
 DATA_MOUNT_PATH="${z3_mount_path}"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 DEPLOYMENT_NAME="${deployment_name}"
+Z3_NETWORK="${z3_network}"
 DOCKER_CONFIG_DIR="/etc/apt/keyrings"
 DOCKER_DAEMON_DIR="/etc/docker"
 DOCKER_DAEMON_CONFIG_FILE="$DOCKER_DAEMON_DIR/daemon.json"
@@ -37,6 +38,16 @@ skip_if_already_initialized() {
 mark_initialization_complete() {
     mkdir -p "$STARTUP_STATE_DIR"
     touch "$PROVISIONING_COMPLETE_MARKER"
+}
+
+normalize_snapshot_config() {
+    if [ "$Z3_NETWORK" = "regtest" ]; then
+        if [ "$SNAPSHOT_ENABLED" = "true" ]; then
+            log "Disabling snapshot tooling for regtest deployment"
+        fi
+
+        SNAPSHOT_ENABLED="false"
+    fi
 }
 
 ensure_user() {
@@ -543,6 +554,12 @@ main() {
 
     zone="$(basename "$(metadata_get 'instance/zone')")"
     instance_name="$(metadata_get 'instance/name')"
+
+    if [ "$NETWORK_NAME" = "regtest" ]; then
+        log "Skipping snapshot creation for regtest deployment"
+        exit 0
+    fi
+
     timestamp="$(date -u '+%Y%m%d%H%M%S')"
     snapshot_prefix="z3-$${DEPLOYMENT_NAME}-$${instance_name##*-}"
     max_prefix_length=$((63 - $${#timestamp} - 1))
@@ -624,6 +641,7 @@ EOF
 
 log "Starting z3 host initialization for project ${gcloud_project}"
 skip_if_already_initialized
+normalize_snapshot_config
 install_base_packages
 install_tmux_config
 install_global_bash_aliases

@@ -38,9 +38,9 @@ locals {
       data_disk_name = coalesce(try(deployment.data_disk_name, null), format("%s-%s", var.z3_data_disk_name, trim(replace(replace(replace(lower(deployment_name), "_", "-"), ".", "-"), " ", "-"), "-")))
       data_disk_size = coalesce(try(deployment.data_disk_size, null), local.z3_data_disk_sizes_by_network[deployment.network])
       data_disk_type = coalesce(try(deployment.data_disk_type, null), var.z3_data_disk_type)
-      snapshot_enabled = coalesce(
+      snapshot_enabled = deployment.network == "regtest" ? false : coalesce(
         try(deployment.snapshot_enabled, null),
-        deployment.network != "regtest"
+        true
       )
       snapshot_retention_count = coalesce(
         try(deployment.snapshot_retention_count, null),
@@ -50,9 +50,9 @@ locals {
         try(deployment.snapshot_timer_on_calendar, null),
         var.z3_snapshot_timer_on_calendar
       )
-      restore_from_latest_snapshot = coalesce(
+      restore_from_latest_snapshot = deployment.network == "regtest" ? false : coalesce(
         try(deployment.restore_from_latest_snapshot, null),
-        deployment.network == "regtest" ? false : var.z3_restore_from_latest_snapshot
+        var.z3_restore_from_latest_snapshot
       )
       labels = merge(coalesce(try(deployment.labels, null), {}), {
         role       = "z3"
