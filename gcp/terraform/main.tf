@@ -5,12 +5,20 @@ provider "google" {
 }
 
 locals {
-  zcashd_fullnode_enabled     = var.replicas["zcashd-fullnode"] > 0
-  zcashd_privatenode_enabled  = var.replicas["zcashd-privatenode"] > 0
-  zcashd_archivenode_enabled  = var.replicas["zcashd-archivenode"] > 0
-  zebrad_archivenode_enabled  = var.replicas["zebrad-archivenode"] > 0
-  z3_enabled                  = var.replicas["z3"] > 0
-  z3_public_p2p_port          = lookup({ mainnet = "8233", testnet = "18232" }, var.z3_network, null)
+  zcashd_fullnode_enabled    = var.replicas["zcashd-fullnode"] > 0
+  zcashd_privatenode_enabled = var.replicas["zcashd-privatenode"] > 0
+  zcashd_archivenode_enabled = var.replicas["zcashd-archivenode"] > 0
+  zebrad_archivenode_enabled = var.replicas["zebrad-archivenode"] > 0
+
+  z3_p2p_ports = {
+    mainnet = "8233"
+    testnet = "18232"
+  }
+  z3_public_deployments = {
+    for k, v in var.z3_deployments :
+    k => v
+    if v.expose_p2p_public && contains(keys(local.z3_p2p_ports), v.network)
+  }
 }
 
 resource "google_project_service" "compute" {
@@ -112,8 +120,8 @@ resource "google_compute_firewall" "zcashd_private" {
 }
 
 resource "google_compute_firewall" "z3" {
-  count      = local.z3_public_p2p_port != null ? 1 : 0
-  name       = "z3-firewall"
+  for_each   = local.z3_public_deployments
+  name       = "z3-${each.key}-p2p-firewall"
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
 
@@ -122,7 +130,7 @@ resource "google_compute_firewall" "z3" {
 
   allow {
     protocol = "tcp"
-    ports    = [local.z3_public_p2p_port]
+    ports    = [local.z3_p2p_ports[each.value.network]]
   }
 }
 
@@ -213,28 +221,29 @@ module "zebrad-archivenode" {
 }
 
 module "z3" {
-  count  = local.z3_enabled ? 1 : 0
-  source = "./modules/z3"
-  # variables
+  for_each = var.z3_deployments
+  source   = "./modules/z3"
+
   project                     = var.project
   network_name                = var.network_name
   service_account_scopes      = var.service_account_scopes
   region                      = var.region
   zone                        = var.zone
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  instance_count              = var.replicas["z3"]
-  instance_type               = var.instance_types["z3"]
+  instance_count              = each.value.replicas
+  instance_type               = var.z3_instance_types[each.value.network]
   boot_disk_size              = var.z3_boot_disk_size
-  data_disk_name              = var.z3_data_disk_name
-  data_disk_size              = var.z3_data_disk_size
+  data_disk_name              = "z3-${each.key}-zebra-data"
+  data_disk_size              = var.z3_data_disk_sizes[each.value.network]
   data_disk_type              = var.z3_data_disk_type
+  hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
   z3_repo_url                 = var.z3_repo_url
   z3_repo_ref                 = var.z3_repo_ref
-  z3_network                  = var.z3_network
+  z3_network                  = each.value.network
   z3_mount_path               = var.z3_mount_path
-  install_rust_toolchain      = var.z3_install_rust_toolchain
+  install_rust_toolchain      = each.value.install_rust_toolchain != null ? each.value.install_rust_toolchain : var.z3_install_rust_toolchain
   depends_on                  = [google_compute_network.zcash_network]
 }
 

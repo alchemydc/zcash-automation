@@ -7,7 +7,6 @@ variable "replicas" {
     zcashd-fullnode    = 0
     zcashd-privatenode = 0
     zebrad-archivenode = 0
-    z3                 = 1
   }
 }
 
@@ -20,7 +19,6 @@ variable "instance_types" {
     zcashd-fullnode    = "n1-standard-2"
     zcashd-privatenode = "n1-standard-2"
     zebrad-archivenode = "e2-standard-4"
-    z3                 = "e2-standard-4"
   }
 }
 
@@ -123,33 +121,10 @@ variable "z3_repo_ref" {
   default     = "dev"
 }
 
-variable "z3_network" {
-  description = "The z3 network to configure. Valid values are mainnet, testnet or regtest."
-  type        = string
-  default     = "testnet"
-
-  validation {
-    condition     = contains(["mainnet", "testnet", "regtest"], var.z3_network)
-    error_message = "z3_network must be either mainnet, testnet or regtest."
-  }
-}
-
 variable "z3_boot_disk_size" {
   description = "Size (in GB) of the z3 boot disk used for Docker images, builds, and repo checkout"
   type        = number
   default     = 50
-}
-
-variable "z3_data_disk_name" {
-  description = "Base name of the persistent z3 Zebra data disk"
-  type        = string
-  default     = "z3-zebra-data"
-}
-
-variable "z3_data_disk_size" {
-  description = "Size (in GB) of the persistent z3 Zebra data disk"
-  type        = number
-  default     = 500
 }
 
 variable "z3_data_disk_type" {
@@ -168,4 +143,37 @@ variable "z3_install_rust_toolchain" {
   description = "Whether to install rustup/cargo for the z3 app user"
   type        = bool
   default     = false
+}
+
+variable "z3_deployments" {
+  description = "Map of z3 deployments keyed by environment name (e.g. mainnet, testnet, regtest)"
+  type = map(object({
+    network                = string
+    replicas               = number
+    hostname_prefix        = string
+    labels                 = map(string)
+    expose_p2p_public      = bool
+    install_rust_toolchain = optional(bool)
+  }))
+  default = {}
+}
+
+variable "z3_instance_types" {
+  description = "GCP machine type per z3 network (mainnet, testnet, regtest)"
+  type        = map(string)
+  default = {
+    mainnet = "e2-standard-4"
+    testnet = "e2-standard-4"
+    regtest = "e2-standard-2"
+  }
+}
+
+variable "z3_data_disk_sizes" {
+  description = "Persistent data disk size (GB) per z3 network (mainnet, testnet, regtest)"
+  type        = map(number)
+  default = {
+    mainnet = 350
+    testnet = 50
+    regtest = 10
+  }
 }

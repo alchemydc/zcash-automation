@@ -1,12 +1,12 @@
 resource "google_compute_address" "z3" {
   count        = var.instance_count
-  name         = format("z3-%d-address", count.index)
+  name         = format("%s-%d-address", var.hostname_prefix, count.index)
   address_type = "EXTERNAL"
 }
 
 resource "google_compute_address" "z3_internal" {
   count        = var.instance_count
-  name         = format("z3-%d-internal-address", count.index)
+  name         = format("%s-%d-internal-address", var.hostname_prefix, count.index)
   address_type = "INTERNAL"
   subnetwork   = var.subnetwork
   purpose      = "GCE_ENDPOINT"
@@ -21,7 +21,7 @@ resource "google_compute_disk" "z3_data" {
 
 resource "google_compute_instance" "z3" {
   count        = var.instance_count
-  name         = format("z3-%d", count.index)
+  name         = format("%s-%d", var.hostname_prefix, count.index)
   machine_type = var.instance_type
   depends_on   = [google_compute_disk.z3_data]
 

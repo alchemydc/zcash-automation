@@ -304,6 +304,9 @@ configure_repo() {
     if [ "${z3_network}" = "main" ]; then
         network_name="Mainnet"
         zallet_network="main"
+    elif [ "${z3_network}" = "regtest" ]; then
+        network_name="Regtest"
+        zallet_network="regtest"
     else
         network_name="Testnet"
         zallet_network="test"
@@ -332,14 +335,17 @@ configure_repo() {
     fi
 }
 
-build_required_images() {
-    log "Building required z3 images"
+pull_or_build_images() {
+    log "Pulling prebuilt z3 images"
     cd "$APP_DIR"
-    docker compose build zaino zallet
+    if ! docker compose pull; then
+        log "Pull failed for some images, falling back to local build"
+        docker compose build
+    fi
 }
 
 install_runtime_helpers() {
-    log "Installing runtime helper scripts and systemd services"
+    log "Installing runtime helper scripts"
 
     cat <<'EOF' > /usr/local/bin/z3-check-zebra-readiness
 #!/bin/bash
@@ -357,47 +363,45 @@ exec docker compose up -d
 EOF
     chmod 0755 /usr/local/bin/z3-start-full-stack
 
-    cat <<'EOF' > /etc/systemd/system/z3-zebra.service
-[Unit]
-Description=Z3 Zebra initial sync phase
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
+}
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/z3
-ExecStart=/usr/bin/docker compose up -d zebra
-ExecStop=/usr/bin/docker compose stop zebra
-TimeoutStartSec=0
+print_next_steps() {
+    local network_name
 
-[Install]
-WantedBy=multi-user.target
-EOF
+    if [ "${z3_network}" = "main" ]; then
+        network_name="Mainnet"
+    elif [ "${z3_network}" = "regtest" ]; then
+        network_name="Regtest"
+    else
+        network_name="Testnet"
+    fi
 
-    cat <<'EOF' > /etc/systemd/system/z3-stack.service
-[Unit]
-Description=Z3 full stack
-Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
+    log "============================================================"
+    log "z3 host initialization complete (network: $network_name)"
+    log ""
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=/opt/z3
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
-TimeoutStartSec=0
+    if [ "${z3_network}" = "regtest" ]; then
+        log "NEXT STEPS:"
+        log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
+        log "  2. Switch to the app user: sudo -iu z3"
+        log "  3. Run first-time setup:   cd /opt/z3 && ./scripts/regtest-init.sh"
+        log "     (generates wallet password hash, mines block 1, inits wallet)"
+        log "  4. Start the full stack:   cd /opt/z3 && docker compose --env-file .env.regtest up -d"
+    else
+        log "NEXT STEPS:"
+        log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
+        log "  2. Switch to the app user: sudo -iu z3"
+        log "  3. Start Zebra for initial chain sync:"
+        log "       cd /opt/z3 && docker compose up -d zebra"
+        log "  4. Monitor sync progress:  cd /opt/z3 && ./check-zebra-readiness.sh"
+        log "  5. Once synced, start the full stack:"
+        log "       cd /opt/z3 && docker compose up -d"
+        log ""
+        log "NOTE: Zebra must fully sync before Zaino and Zallet can start."
+        log "      This may take several hours on $network_name."
+    fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable z3-zebra.service
-    systemctl start z3-zebra.service
+    log "============================================================"
 }
 
 log "Starting z3 host initialization for project ${gcloud_project}"
@@ -412,7 +416,6 @@ ensure_data_disk
 ensure_rage
 checkout_repo
 configure_repo
-#build_required_images
-# uncomment above ot use local build instead of pulling from registry - requires docker buildx to be installed
+pull_or_build_images
 install_runtime_helpers
-log "z3 host initialization complete"
+print_next_steps

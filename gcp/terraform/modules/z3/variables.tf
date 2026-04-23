@@ -80,7 +80,7 @@ variable "z3_repo_ref" {
 
 variable "z3_network" {
   type        = string
-  description = "The z3 network to configure. Valid values are main or test."
+  description = "The z3 network to configure. Valid values are main, test, or regtest."
 }
 
 variable "z3_mount_path" {
@@ -92,4 +92,9 @@ variable "install_rust_toolchain" {
   type        = bool
   description = "Whether to install rustup/cargo for the z3 app user"
   default     = true
+}
+
+variable "hostname_prefix" {
+  type        = string
+  description = "Prefix used for GCP resource names (instances, disks, addresses)"
 }
