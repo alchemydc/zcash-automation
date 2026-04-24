@@ -3,6 +3,7 @@
 This module provisions a GCE VM for the Z3 stack and configures it during startup to:
 
 - install Docker Engine and the Docker Compose plugin
+- configure Docker to use the `journald` log driver by default
 - clone the z3 repository
 - install `rage` and `rage-keygen`
 - optionally install a Rust toolchain (`rustup`, `cargo`, `rustfmt`, `clippy`) for the `z3` app user
@@ -20,6 +21,8 @@ On first boot the startup script performs the repo's documented production flow:
 4. generate `config/zallet_identity.txt` with `rage-keygen` if it does not exist
 5. build the required Docker images for Zaino and Zallet
 6. start only Zebra so it can complete the initial sync
+
+Temporary workaround: `startup.sh` currently makes `config/tls/zaino.key` world-readable so the Zaino container can read it. This should be replaced with a proper ownership or runtime-user fix later.
 
 Once Zebra is near tip, operators can bring up the full stack with:
 

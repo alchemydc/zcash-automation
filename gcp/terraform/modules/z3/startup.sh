@@ -158,6 +158,24 @@ install_ops_agent() {
     bash /tmp/add-google-cloud-ops-agent-repo.sh --also-install
 }
 
+configure_docker_daemon() {
+    local docker_config_dir="/etc/docker"
+    local daemon_config_file="$docker_config_dir/daemon.json"
+
+    log "Configuring Docker daemon logging driver"
+    install -m 0755 -d "$docker_config_dir"
+    cat <<'EOF' > "$daemon_config_file"
+{
+  "log-driver": "journald"
+}
+EOF
+
+    if systemctl is-active --quiet docker.service; then
+        log "Restarting Docker to apply daemon configuration"
+        systemctl restart docker.service
+    fi
+}
+
 install_docker() {
     if command -v docker >/dev/null 2>&1; then
         log "Docker already installed"
@@ -323,6 +341,7 @@ configure_repo() {
             -sha256 -days 365 -nodes \
             -subj "/CN=localhost" \
             -addext "subjectAltName=DNS:localhost,DNS:zaino,IP:127.0.0.1"
+        chmod a+r config/tls/zaino.key
     fi
 
     if [ ! -f config/zallet_identity.txt ]; then
@@ -387,6 +406,8 @@ print_next_steps() {
         log "  3. Run first-time setup:   cd /opt/z3 && ./scripts/regtest-init.sh"
         log "     (generates wallet password hash, mines block 1, inits wallet)"
         log "  4. Start the full stack:   cd /opt/z3 && docker compose --env-file .env.regtest up -d"
+        log "  for optional Zcashd: docker compose --env-file .env.regtest --profile zcashd up -d zcashd"
+
     else
         log "NEXT STEPS:"
         log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
@@ -396,6 +417,7 @@ print_next_steps() {
         log "  4. Monitor sync progress:  cd /opt/z3 && ./check-zebra-readiness.sh"
         log "  5. Once synced, start the full stack:"
         log "       cd /opt/z3 && docker compose up -d"
+        log "  for optional Zcashd: docker compose --profile zcashd up -d zcashd"
         log ""
         log "NOTE: Zebra must fully sync before Zaino and Zallet can start."
         log "      This may take several hours on $network_name."
@@ -410,6 +432,7 @@ install_tmux_config
 install_global_bash_aliases
 install_ops_agent
 install_docker
+configure_docker_daemon
 ensure_user
 install_rust_toolchain
 ensure_data_disk
