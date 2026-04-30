@@ -1,10 +1,10 @@
-resource "google_compute_address" "zebrad_archivenode" {
+resource "google_compute_address" "zebra_testing" {
   count        = var.instance_count
   name         = format("%s-%d-address", var.hostname_prefix, count.index)
   address_type = "EXTERNAL"
 }
 
-resource "google_compute_address" "zebrad_archivenode_internal" {
+resource "google_compute_address" "zebra_testing_internal" {
   count        = var.instance_count
   name         = format("%s-%d-internal-address", var.hostname_prefix, count.index)
   address_type = "INTERNAL"
@@ -20,7 +20,7 @@ resource "google_compute_disk" "zebra_state" {
   snapshot = var.data_disk_snapshot
 }
 
-resource "google_compute_instance" "archivenode" {
+resource "google_compute_instance" "zebra_testing" {
   count        = var.instance_count
   name         = format("%s-%d", var.hostname_prefix, count.index)
   machine_type = var.instance_type
@@ -43,10 +43,10 @@ resource "google_compute_instance" "archivenode" {
   network_interface {
     network    = var.network_name
     subnetwork = var.subnetwork
-    network_ip = google_compute_address.zebrad_archivenode_internal[count.index].address
+    network_ip = google_compute_address.zebra_testing_internal[count.index].address
 
     access_config {
-      nat_ip = google_compute_address.zebrad_archivenode[count.index].address
+      nat_ip = google_compute_address.zebra_testing[count.index].address
     }
   }
 
@@ -60,7 +60,7 @@ resource "google_compute_instance" "archivenode" {
       health_listen_addr     = var.health_listen_addr,
       hostname               = format("%s-%d", var.hostname_prefix, count.index),
       metrics_endpoint_addr  = var.metrics_endpoint_addr,
-      module_role            = "zebrad-archivenode",
+      module_role            = "zebra-testing",
       snapshot_on_calendar   = var.snapshot_on_calendar,
       zebra_listen_addr      = var.zebra_listen_addr,
       zebra_listen_port      = element(split(":", var.zebra_listen_addr), length(split(":", var.zebra_listen_addr)) - 1),
@@ -77,6 +77,6 @@ resource "google_compute_instance" "archivenode" {
   }
 
   tags = [
-    "zebrad-archivenode",
+    "zebra-testing",
   ]
 }

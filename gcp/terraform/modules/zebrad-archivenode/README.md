@@ -1,10 +1,8 @@
 # zebrad-archivenode Terraform Module
 
-## Variable: enable_cron_backups
+This module provisions one or more source-built Zebra archive nodes on GCE.
 
-- **Type:** bool
-- **Default:** false
-
-Controls whether backup cron jobs are scheduled on provisioned archive nodes.  
-Set to `true` to enable automatic installation of backup cron jobs during provisioning.  
-This variable is defined and set at the module level; it is not inherited from the project root.
+- Zebra is cloned from a configurable git repository and ref.
+- Runtime configuration is managed primarily via `ZEBRA_*` environment variables in a systemd environment file.
+- Chain state is stored on a dedicated persistent disk.
+- Snapshotting is handled by a host-side systemd timer; GCS tarball and rsync backups are not used.

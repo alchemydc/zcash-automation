@@ -1,377 +1,414 @@
 #!/bin/bash
 set -euo pipefail
-set -x
 
-# Add a logging function
+LOG_FILE="/var/log/${module_role}-startup.log"
+exec > >(tee -a "$LOG_FILE" | logger -t "${module_role}-startup") 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
+APP_USER="zebra"
+APP_DIR="/opt/zebra"
+APP_HOME="/home/$APP_USER"
+BASE_STATE_DIR="/var/lib/${module_role}"
+BASE_MARKER_PATH="$BASE_STATE_DIR/base-provisioned"
+DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
+STATE_MOUNT_PATH="${zebra_state_mount_path}"
+
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | logger -t startup-script
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
 }
 
-log "Starting zebra node initialization"
-
-apt update && apt install -y screen htop nftables pigz clang libclang1 libclang-dev build-essential llvm
-
-# ---- Useful aliases ----
-log "Configuring aliases"
-echo "alias ll='ls -laF'" >> /etc/skel/.bashrc
-echo "alias ll='ls -laF'" >> /root/.bashrc
-
-# ---- Install Google Ops Agent ----
-log "Installing Google Ops Agent"
-curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-bash add-google-cloud-ops-agent-repo.sh --also-install
-
-# add zebra user
-useradd -m zebra -s /bin/bash
-
-# ---- Set Up Persistent Disk for .zebra dir ----
-DISK_PATH=$(readlink -f /dev/disk/by-id/google-${data_disk_name})
-DATA_DIR=/home/zebra/.cache
-
-log "Setting up persistent disk ${data_disk_name} at $DISK_PATH..."
-
-DISK_FORMAT=ext4
-CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
-
-log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
-
-if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
-else
-  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
-  mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
-fi
-
-log "Mounting $DISK_PATH onto $DATA_DIR"
-mkdir -p $DATA_DIR
-DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
-echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
-mount $DATA_DIR
-chown -R zebra:zebra $DATA_DIR
-
-# ---- Set Up Persistent Disk for .cargo dir ----
-DISK_PATH=$(readlink -f /dev/disk/by-id/google-${params_disk_name})
-DATA_DIR=/home/zebra/.cargo
-
-log "Setting up persistent disk ${params_disk_name} at $DISK_PATH..."
-
-DISK_FORMAT=ext4
-CURRENT_DISK_FORMAT=$(lsblk -i -n -o fstype $DISK_PATH)
-
-log "Checking if disk $DISK_PATH format $CURRENT_DISK_FORMAT matches desired $DISK_FORMAT..."
-
-if [[ $CURRENT_DISK_FORMAT == $DISK_FORMAT ]]; then
-  log "Disk $DISK_PATH is correctly formatted as $DISK_FORMAT"
-else
-  log "Disk $DISK_PATH is not formatted correctly, formatting as $DISK_FORMAT..."
-  mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard $DISK_PATH
-fi
-
-log "Mounting $DISK_PATH onto $DATA_DIR"
-mkdir -p $DATA_DIR
-DISK_UUID=$(blkid $DISK_PATH | cut -d '"' -f2)
-echo "UUID=$DISK_UUID     $DATA_DIR   auto    discard,defaults    0    0" >> /etc/fstab
-mount $DATA_DIR
-chown -R zebra:zebra $DATA_DIR
-
-# ---- Setup swap
-log "Setting up swapfile"
-fallocate -l 1G /swapfile
-chmod 600 /swapfile
-mkswap /swapfile
-swapon /swapfile
-swapon -s
-
-# ---- Config /etc/screenrc ----
-log "Configuring /etc/screenrc"
-cat <<'EOF' >> '/etc/screenrc'
-bindkey -k k1 select 1  #  F1 = screen 1
-bindkey -k k2 select 2  #  F2 = screen 2
-bindkey -k k3 select 3  #  F3 = screen 3
-bindkey -k k4 select 4  #  F4 = screen 4
-bindkey -k k5 select 5  #  F5 = screen 5
-bindkey -k k6 select 6  #  F6 = screen 6
-bindkey -k k7 select 7  #  F7 = screen 7
-bindkey -k k8 select 8  #  F8 = screen 8
-bindkey -k k9 select 9  #  F9 = screen 9
-bindkey -k F1 prev      # F11 = prev
-bindkey -k F2 next      # F12 = next
-EOF
-
-# ---- Create backup script
-log "Creating chaindata backup script"
-cat <<'EOF' > /root/backup.sh
-#!/bin/bash
-set -x
-
-log "Starting chaindata backup"
-log "Stopping zebrad"
-systemctl stop zebrad.service
-sleep 5
-log "Tarring up chainstate and blocks"
-mkdir /home/zebra/.cache/backup
-tar -I "pigz --fast" --exclude='IDENTITY' -C /home/zebra/.cache -cvf /home/zebra/.cache/backup/zebra_chaindata.tgz zebra
-log "copying tarball to GCS"
-gsutil cp /home/zebra/.cache/backup/zebra_chaindata.tgz gs://${gcloud_project}-chaindata
-log "removing tarball from local fs"
-rm -f /home/zebra/.cache/backup/zebra_chaindata.tgz
-log "Chaindata backup completed"
-sleep 3
-log "starting zebrad"
-systemctl start zebrad.service
-EOF
-chmod u+x /root/backup.sh
-
-# ----- Create snapshot script
-cat <<EOF > /root/backup_snapshot.sh
-#!/bin/bash
-set -x
-log "Deleting snapshots"
-echo 'y' | gcloud compute snapshots delete ${data_disk_name}-snapshot-latest 
-echo 'y' | gcloud compute snapshots delete ${params_disk_name}-snapshot-latest
-log "Taking snapshot of Zebra cargo disk"
-gcloud compute disks snapshot ${params_disk_name} --snapshot-names=${params_disk_name}-snapshot-latest --zone=${gcloud_zone}
-log "Stopping zebrad"
-systemctl stop zebrad
-sleep 5
-log "Taking snapshot of Zebrad data disk"
-gcloud compute disks snapshot ${data_disk_name} --snapshot-names=${data_disk_name}-snapshot-latest --zone=${gcloud_zone}
-sleep 3
-log "starting zebrad"
-systemctl start zebrad.service
-EOF
-chmod u+x /root/backup_snapshot.sh
-
-# ---- Create rsync backup script
-log "Creating rsync chaindata backup script"
-cat <<'EOF' > /root/backup_rsync.sh
-#!/bin/bash
-set -x
-
-log "Starting rsync chaindata backup"
-log "Stopping zebrad"
-systemctl stop zebrad.service
-sleep 5
-log "rsyncing Zebra state to GCS"
-gsutil -m rsync -d -r /home/zebra/.cache/zebra gs://${gcloud_project}-chaindata-rsync/zebra
-log "rsync chaindata backup completed"
-sleep 3
-log "starting zebrad"
-systemctl start zebrad.service
-EOF
-chmod u+x /root/backup_rsync.sh
-
-# ---- Add backups to cron
-if [ "${enable_cron_backups}" = "true" ]; then
-cat <<'EOF' > /root/backup.crontab
-# m h  dom mon dow   command
-57 0 * * 0 /root/backup.sh | logger
-17 0 * * * /root/backup_rsync.sh | logger
-20 04 * * * /root/backup_snapshot.sh | logger
-EOF
-/usr/bin/crontab /root/backup.crontab
-fi
-
-# ---- Create restore script
-log "Creating chaindata restore script"
-cat <<'EOF' > /root/restore.sh
-#!/bin/bash
-set -x
-
-gsutil -q stat gs://${gcloud_project}-chaindata/zebra_chaindata.tgz
-if [ $? -eq 0 ]
-then
-  mkdir -p /home/zebra/.cache
-  mkdir -p /home/zebra/.cache/restore
-  log "downloading chaindata from gs://${gcloud_project}-chaindata/zebra_chaindata.tgz"
-  gsutil cp gs://${gcloud_project}-chaindata/zebra_chaindata.tgz /home/zebra/.cache/restore/zebra_chaindata.tgz
-  log "stopping zebrad to untar chaindata"
-  systemctl stop zebrad.service
-  sleep 3
-  log "Deleting old chaindata"
-  rm -rf /home/zebra/.cache/*
-  log "untarring chaindata"
-  tar xvf /home/zebra/.cache/restore/zebra_chaindata.tgz -I pigz --directory /home/zebra/.cache
-  log "Setting perms on chaindata"
-  chown -R zebra:zebra /home/zebra/.cache
-  log "removing chaindata tarball"
-  rm -rf /home/zebra/.cache/restore/zebra_chaindata.tgz
-  sleep 3
-  log "starting zebrad"
-  systemctl start zebrad.service
-  else
-    log "No zebra_chaindata.tgz found in bucket gs://${gcloud_project}-chaindata, aborting warp restore"
-    log "Starting zebrad"
-    systemctl start zebrad
+ensure_user() {
+  if ! id -u "$APP_USER" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash "$APP_USER"
   fi
-EOF
-chmod u+x /root/restore.sh
+}
 
-# ---- Create rsync restore script
-log "Creating rsync chaindata restore script"
-cat <<'EOF' > /root/restore_rsync.sh
-#!/bin/bash
-set -x
+install_base_packages() {
+  log "Installing base packages"
+  apt-get update
+  apt-get install -y \
+    build-essential \
+    ca-certificates \
+    clang \
+    curl \
+    git \
+    htop \
+    jq \
+    libclang-dev \
+    libssl-dev \
+    llvm \
+    nftables \
+    pkg-config \
+    tmux
+}
 
-gsutil -q stat gs://${gcloud_project}-chaindata-rsync/zebra
-if [ $? -eq 0 ]
-then
-  log "stopping zebrad"
-  systemctl stop zebrad.service
-  log "downloading Zebra state via rsync from gs://${gcloud_project}-chaindata-rsync/zebra"
-  mkdir -p /home/zebra/.cache/zebra
-  gsutil -m rsync -d -r gs://${gcloud_project}-chaindata-rsync/zebra /home/zebra/.cache/zebra
-  log "Setting perms on state"
-  chown -R zebra:zebra /home/zebra/.cache
-  log "starting zebrad"
-  sleep 3
-  systemctl start zebrad.service
-  else
-    log "No chaindata found in bucket gs://${gcloud_project}-chaindata-rsync, aborting warp restore"
+install_ops_agent() {
+  local ops_agent_installer
+
+  if dpkg -s google-cloud-ops-agent >/dev/null 2>&1; then
+    log "Google Ops Agent already installed"
+    return
   fi
-EOF
-chmod u+x /root/restore_rsync.sh
 
-log "Configuring firewall rules"
- tee <<EOF >/dev/null /etc/nftables.conf
+  log "Installing Google Ops Agent"
+  ops_agent_installer="/tmp/add-google-cloud-ops-agent-repo.sh"
+  curl -fsSL -o "$ops_agent_installer" https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+  bash "$ops_agent_installer" --also-install
+  rm -f "$ops_agent_installer"
+}
+
+install_tmux_config() {
+  log "Installing global tmux configuration"
+  cat <<'EOF' > /etc/tmux.conf
+# --- Screen Compatibility Basics ---
+
+# 1. Remap Prefix to Control-A
+unbind C-b
+set -g prefix C-a
+bind C-a send-prefix
+
+# 2. Basic Screen Behavior
+set -g history-limit 10000
+set -g default-command "$SHELL"
+set -g base-index 1
+
+# 3. Navigation Bindings
+bind C-a last-window
+bind space next-window
+bind BSpace previous-window
+
+# F1 - F12 Select Windows 1 - 12
+bind -n F1 select-window -t 1
+bind -n F2 select-window -t 2
+bind -n F3 select-window -t 3
+bind -n F4 select-window -t 4
+bind -n F5 select-window -t 5
+bind -n F6 select-window -t 6
+bind -n F7 select-window -t 7
+bind -n F8 select-window -t 8
+bind -n F9 select-window -t 9
+bind -n F10 select-window -t 10
+bind -n F11 select-window -t 11
+bind -n F12 select-window -t 12
+
+# Mouse Support for scrolling
+set -g mouse on
+
+# Performance improvements
+set -s escape-time 0
+
+# Status bar shows window indexes alongside names.
+set -g status-bg black
+set -g status-fg white
+set -g status-left ""
+setw -g window-status-current-format "#[fg=red,bold]#I:#W#[default]"
+setw -g window-status-format "#I:#W"
+EOF
+}
+
+install_global_bash_aliases() {
+  local alias_line="alias ll='ls -laF'"
+
+  if grep -Fqx "$alias_line" /etc/bash.bashrc; then
+    return
+  fi
+
+  printf '\n# Added by %s startup\n%s\n' "${module_role}" "$alias_line" >> /etc/bash.bashrc
+}
+
+install_rust_toolchain() {
+  local app_home
+
+  log "Installing Rust toolchain for $APP_USER"
+
+  app_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
+
+  if [ -z "$app_home" ]; then
+    log "Could not determine home directory for $APP_USER"
+    exit 1
+  fi
+
+  if ! su - "$APP_USER" -c 'command -v rustup >/dev/null 2>&1'; then
+    su - "$APP_USER" -c 'curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain stable'
+  fi
+
+  su - "$APP_USER" -c 'source "$HOME/.cargo/env" && rustup toolchain install stable && rustup default stable && rustup component add rustfmt clippy'
+
+  if ! grep -Fq '. "$HOME/.cargo/env"' "$app_home/.bashrc"; then
+    printf '\n# Added by %s startup\n. "$HOME/.cargo/env"\n' "${module_role}" >> "$app_home/.bashrc"
+    chown "$APP_USER:$APP_USER" "$app_home/.bashrc"
+  fi
+}
+
+ensure_data_disk() {
+  local current_disk_format
+  local disk_uuid
+
+  log "Preparing persistent state disk ${data_disk_name}"
+  current_disk_format="$(lsblk -i -n -o fstype "$DATA_DISK_PATH")"
+
+  if [ "$current_disk_format" != "ext4" ]; then
+    log "Formatting $DATA_DISK_PATH as ext4"
+    mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard "$DATA_DISK_PATH"
+  fi
+
+  mkdir -p "$STATE_MOUNT_PATH"
+  disk_uuid="$(blkid -s UUID -o value "$DATA_DISK_PATH")"
+
+  if ! grep -q " $STATE_MOUNT_PATH " /etc/fstab; then
+    echo "UUID=$disk_uuid $STATE_MOUNT_PATH ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+  fi
+
+  if ! mountpoint -q "$STATE_MOUNT_PATH"; then
+    mount "$STATE_MOUNT_PATH"
+  fi
+
+  chown -R "$APP_USER:$APP_USER" "$STATE_MOUNT_PATH"
+  chmod 700 "$STATE_MOUNT_PATH"
+}
+
+configure_firewall() {
+  log "Configuring host nftables firewall"
+  cat <<EOF > /etc/nftables.conf
 #!/usr/sbin/nft -f
 flush ruleset
 table inet filter {
-        chain input {
-                type filter hook input priority 0;
-                iif lo accept
-                ct state established,related accept
-                tcp dport { 22, 8233 } ct state new accept
-                counter drop
-        }
+  chain input {
+    type filter hook input priority 0;
+    iif lo accept
+    ct state established,related accept
+    tcp dport { 22, ${zebra_listen_port} } ct state new accept
+    counter drop
+  }
 }
 EOF
 
-log "Enabling host nftables firewall"
-systemctl enable nftables.service
-systemctl start nftables.service
+  systemctl enable nftables.service
+  systemctl restart nftables.service
+}
 
-log "Creating Zebra install script in /home/zebra"
-tee << 'EOF' > /dev/null /home/zebra/install_zebra.sh
-#!/bin/bash
-set -x
-echo "Installing rust"
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-echo "Adding rust to path"
-. /home/zebra/.cargo/env
-# Rust/Cargo optimized build flags for production
-echo "Building zebrad with optimizations"
-export RUSTFLAGS="-C target-cpu=native -C codegen-units=1 -C opt-level=3"
-export CARGO_PROFILE_RELEASE_LTO="thin"
-export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
-export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+write_zebra_env_file() {
+  log "Writing zebrad environment file"
 
-# Install zebrad with optimizations and features
-cargo install \
-    --locked \
-    --features prometheus \
-    --git https://github.com/ZcashFoundation/zebra zebrad\
-    --tag "${zebra_release_tag}" \
-    --jobs "$(nproc)" \
-    --verbose
-echo "Generating default zebrad config"
-zebrad generate > /home/zebra/zebrad.conf
+  cat <<EOF > /etc/default/zebrad
+ZEBRA_NETWORK__NETWORK=${zebra_network}
+ZEBRA_NETWORK__LISTEN_ADDR=${zebra_listen_addr}
+ZEBRA_STATE__CACHE_DIR=${zebra_state_mount_path}
+ZEBRA_STATE__EPHEMERAL=false
+ZEBRA_TRACING__USE_JOURNALD=true
+ZEBRA_TRACING__USE_COLOR=false
+ZEBRA_TRACING__FORCE_USE_COLOR=false
 EOF
 
-log "Creating systemd unit for zebrad"
-tee <<'EOF' > /dev/null /etc/systemd/system/zebrad.service
+  if [ -n "${metrics_endpoint_addr}" ]; then
+    echo "ZEBRA_METRICS__ENDPOINT_ADDR=${metrics_endpoint_addr}" >> /etc/default/zebrad
+  fi
+
+  if [ -n "${health_listen_addr}" ]; then
+    echo "ZEBRA_HEALTH__LISTEN_ADDR=${health_listen_addr}" >> /etc/default/zebrad
+  fi
+
+  chmod 0644 /etc/default/zebrad
+}
+
+write_zebrad_service() {
+  log "Writing zebrad systemd service"
+
+  cat <<EOF > /etc/systemd/system/zebrad.service
 [Unit]
-Description=Zebrad
-Requires=zebrad.service
+Description=Zebra node (${module_role})
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=${zebra_state_mount_path}
 
 [Service]
-User=zebra
-Group=zebra
-ExecStart=/home/zebra/.cargo/bin/zebrad -c /home/zebra/zebrad.conf start
+User=$APP_USER
+Group=$APP_USER
+Environment=HOME=$APP_HOME
+Environment=PATH=$APP_HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/zebrad
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/target/release/zebrad start
 Restart=on-failure
 RestartSec=30
-#StandardOutput=syslog
-#StandardError=syslog
+LimitNOFILE=1048576
 SyslogIdentifier=zebrad
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-log "Setting perms on zebra installer"
-chown -R zebra:zebra /home/zebra
-chmod u+x /home/zebra/install_zebra.sh
-log "Running zebra installer as zebra user"
-sudo -u zebra /home/zebra/install_zebra.sh
+  systemctl daemon-reload
+  systemctl enable zebrad.service
+}
 
-log "Enabling zebrad via systemd"
-systemctl daemon-reload
-systemctl enable zebrad.service
+write_snapshot_units() {
+  cat <<'EOF' > /usr/local/bin/zebra-create-snapshot
+#!/bin/bash
+set -euo pipefail
 
-log "Creating zebrad.conf"
-cat << EOF > /home/zebra/zebrad.conf
-# This file can be used as a skeleton for custom configs.
-#
-# Unspecified fields use default values. Optional fields are Some(field) if the
-# field is present and None if it is absent.
-#
-# This file is generated as an example using zebrad's current defaults.
-# You should set only the config options you want to keep, and delete the rest.
-# Only a subset of fields are present in the skeleton, since optional values
-# whose default is None are omitted.
-#
-# The config format (including a complete list of sections and fields) is
-# documented here:
-# https://doc.zebra.zfnd.org/zebrad/config/struct.ZebradConfig.html
-#
-# zebrad attempts to load configs in the following order:
-#
-# 1. The -c flag on the command line, e.g., `zebrad -c myconfig.toml start`;
-# 2. The file `zebrad.toml` in the users's preference directory (platform-dependent);
-# 3. The default config.
+PROJECT="${gcloud_project}"
+ZONE="${gcloud_zone}"
+DISK_NAME="${data_disk_name}"
+SNAPSHOT_NAME="${data_disk_name}-snapshot-latest"
 
-[consensus]
-checkpoint_sync = true
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
 
-[metrics]
+metadata_get() {
+  curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/$1"
+}
 
-[network]
-initial_mainnet_peers = [
-    'dnsseed.z.cash:8233',
-    'dnsseed.str4d.xyz:8233',
-    'mainnet.seeder.zfnd.org:8233',
-    'mainnet.is.yolo.money:8233',
-]
-initial_testnet_peers = [
-    'testnet.seeder.zfnd.org:18233',
-    'testnet.is.yolo.money:18233',
-    'dnsseed.testnet.z.cash:18233',
-]
-listen_addr = '0.0.0.0:8233'
-network = 'Mainnet'
-peerset_initial_target_size = 50
-crawl_new_peer_interval = "1m 1s"
+access_token() {
+  metadata_get "instance/service-accounts/default/token" | jq -r '.access_token'
+}
 
+snapshot_url="https://compute.googleapis.com/compute/v1/projects/$PROJECT/global/snapshots/$SNAPSHOT_NAME"
+token="$(access_token)"
 
-[state]
-cache_dir = '/home/zebra/.cache/zebra'
-ephemeral = false
+if curl -fsS -H "Authorization: Bearer $token" "$snapshot_url" >/dev/null 2>&1; then
+  log "Deleting existing snapshot $SNAPSHOT_NAME"
+  curl -fsS -X DELETE -H "Authorization: Bearer $token" "$snapshot_url" >/dev/null
+  for _ in $(seq 1 60); do
+    if ! curl -fsS -H "Authorization: Bearer $token" "$snapshot_url" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 5
+  done
+fi
 
-[sync]
-checkpoint_verify_concurrency_limit = 1000
-download_concurrency_limit = 50
-full_verify_concurrency_limit = 20
-parallel_cpu_threads = 0
+log "Stopping zebrad before snapshot"
+systemctl stop zebrad.service
+sleep 5
 
-[tracing]
-buffer_limit = 128000
-force_use_color = false
-use_color = false
-use_journald = true
+log "Creating snapshot $SNAPSHOT_NAME"
+curl -fsS \
+  -X POST \
+  -H "Authorization: Bearer $token" \
+  -H "Content-Type: application/json" \
+  "https://compute.googleapis.com/compute/v1/projects/$PROJECT/zones/$ZONE/disks/$DISK_NAME/createSnapshot" \
+  -d "{\"name\":\"$SNAPSHOT_NAME\"}" >/dev/null
+
+log "Starting zebrad after snapshot request"
+systemctl start zebrad.service
+EOF
+  chmod 0755 /usr/local/bin/zebra-create-snapshot
+
+  cat <<EOF > /etc/systemd/system/zebra-snapshot.service
+[Unit]
+Description=Create a snapshot of the Zebra state disk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/zebra-create-snapshot
 EOF
 
-log "Setting perms on zebra config"
-chown -R zebra:zebra /home/zebra
+  cat <<EOF > /etc/systemd/system/zebra-snapshot.timer
+[Unit]
+Description=Run Zebra state disk snapshots on a schedule
 
-log "Starting zebrad"
-systemctl start zebrad
+[Timer]
+OnCalendar=${snapshot_on_calendar}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+
+  if [ "${enable_snapshot_timer}" = "true" ]; then
+    log "Enabling Zebra snapshot timer"
+    systemctl enable zebra-snapshot.timer
+    systemctl restart zebra-snapshot.timer
+  else
+    log "Disabling Zebra snapshot timer"
+    systemctl disable --now zebra-snapshot.timer >/dev/null 2>&1 || true
+  fi
+}
+
+checkout_repo() {
+  local current_rev
+  local latest_release_tag
+  local old_rev=""
+
+  log "Cloning or updating Zebra repository"
+  mkdir -p /opt
+
+  if [ ! -d "$APP_DIR/.git" ]; then
+    git clone "${zebra_repo_url}" "$APP_DIR"
+  fi
+
+  cd "$APP_DIR"
+  old_rev="$(git rev-parse HEAD 2>/dev/null || true)"
+  git remote set-url origin "${zebra_repo_url}"
+  git fetch --tags --prune origin
+
+  if [ "${zebra_repo_ref}" = "latest-release" ]; then
+    latest_release_tag="$(git ls-remote --tags --refs origin 'v*' | awk -F/ '{print $3}' | sort -V | tail -n 1)"
+
+    if [ -z "$latest_release_tag" ]; then
+      log "Could not determine latest release tag from ${zebra_repo_url}"
+      exit 1
+    fi
+
+    log "Checking out latest Zebra release tag $latest_release_tag"
+    git checkout "tags/$latest_release_tag"
+  elif [ -n "${zebra_git_fetch_ref}" ]; then
+    git fetch --prune origin "${zebra_git_fetch_ref}"
+    git checkout --detach FETCH_HEAD
+  elif git ls-remote --exit-code --heads origin "${zebra_repo_ref}" >/dev/null 2>&1; then
+    git checkout -B "${zebra_repo_ref}" "origin/${zebra_repo_ref}"
+  elif git show-ref --verify --quiet "refs/tags/${zebra_repo_ref}"; then
+    git checkout "tags/${zebra_repo_ref}"
+  else
+    git checkout "${zebra_repo_ref}"
+  fi
+
+  git submodule update --init --recursive
+  current_rev="$(git rev-parse HEAD)"
+  chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+
+  if [ ! -x "$APP_DIR/target/release/zebrad" ] || [ "$old_rev" != "$current_rev" ]; then
+    log "Zebra source changed or binary missing; rebuilding"
+    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && cd /opt/zebra && cargo build --release --locked --bin zebrad --features prometheus'
+  else
+    log "Zebra source unchanged; skipping rebuild"
+  fi
+}
+
+ensure_base_provisioning() {
+  if [ -f "$BASE_MARKER_PATH" ]; then
+    return
+  fi
+
+  log "Running one-time base provisioning"
+  mkdir -p "$BASE_STATE_DIR"
+  ensure_user
+  install_base_packages
+  install_ops_agent
+  install_tmux_config
+  install_global_bash_aliases
+  install_rust_toolchain
+  touch "$BASE_MARKER_PATH"
+}
+
+main() {
+  log "Starting ${module_role} initialization for ${hostname}"
+  ensure_base_provisioning
+  ensure_data_disk
+  configure_firewall
+  write_zebra_env_file
+  write_zebrad_service
+  write_snapshot_units
+  checkout_repo
+  systemctl restart zebrad.service
+  log "${module_role} initialization complete"
+}
+
+main "$@"

@@ -52,13 +52,13 @@ resource "google_compute_instance" "z3" {
   metadata_startup_script = templatefile(
     format("%s/startup.sh", path.module),
     {
-      data_disk_name = google_compute_disk.z3_data[count.index].name,
-      gcloud_project = var.project,
+      data_disk_name         = google_compute_disk.z3_data[count.index].name,
+      gcloud_project         = var.project,
       install_rust_toolchain = var.install_rust_toolchain,
-      z3_mount_path  = var.z3_mount_path,
-      z3_network     = var.z3_network,
-      z3_repo_ref    = var.z3_repo_ref,
-      z3_repo_url    = var.z3_repo_url,
+      z3_mount_path          = var.z3_mount_path,
+      z3_network             = var.z3_network,
+      z3_repo_ref            = var.z3_repo_ref,
+      z3_repo_url            = var.z3_repo_url,
     }
   )
 
@@ -66,7 +66,7 @@ resource "google_compute_instance" "z3" {
   # This module intentionally disables OS Login so operators can use VS Code
   # Remote-SSH as z3.
   metadata = {
-    enable-oslogin       = "FALSE"
+    enable-oslogin         = "FALSE"
     block-project-ssh-keys = "TRUE"
   }
 

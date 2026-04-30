@@ -273,12 +273,14 @@ configure_backend() {
             ensure_state_bucket "$terraform_sa"
             ;;
         local)
-            if [ -f backend.tf ]; then
-                echo "Using local backend; removing existing backend.tf"
-                rm -f backend.tf
-            else
-                echo "Using local backend"
-            fi
+            echo "Using local backend"
+            cat > backend.tf <<'EOF'
+terraform {
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}
+EOF
             ;;
     esac
 }

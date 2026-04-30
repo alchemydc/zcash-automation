@@ -15,12 +15,12 @@ variable "zone" {
 
 variable "network_name" {
   type        = string
-  description = "The VPC network name to use for the Zebra archive node"
+  description = "The VPC network name to use for the Zebra testing node"
 }
 
 variable "GCP_DEFAULT_SERVICE_ACCOUNT" {
   type        = string
-  description = "The GCP service account"
+  description = "The default GCP service account used by instances in this project"
 }
 
 variable "service_account_scopes" {
@@ -45,17 +45,16 @@ variable "data_disk_type" {
 
 variable "data_disk_snapshot" {
   type        = string
-  description = "Optional snapshot to restore the persistent state disk from"
-  default     = null
+  description = "Snapshot to restore the persistent state disk from"
 }
 
 variable "instance_count" {
-  description = "Number of archive nodes to provision"
+  description = "Number of Zebra testing nodes to provision"
   type        = number
 }
 
 variable "instance_type" {
-  description = "The GCP instance type to use for this node"
+  description = "The GCP instance type to use for this testing node"
   type        = string
 }
 
@@ -80,7 +79,7 @@ variable "hostname_prefix" {
 }
 
 variable "zebra_repo_url" {
-  description = "The Zebra repository to clone on provisioned archive nodes"
+  description = "The Zebra repository to clone on provisioned testing nodes"
   type        = string
 }
 
@@ -125,7 +124,7 @@ variable "health_listen_addr" {
 variable "enable_snapshot_timer" {
   description = "Whether to install and enable a recurring snapshot timer for the Zebra state disk"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "snapshot_on_calendar" {

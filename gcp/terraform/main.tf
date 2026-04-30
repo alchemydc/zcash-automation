@@ -9,6 +9,7 @@ locals {
   zcashd_privatenode_enabled = var.replicas["zcashd-privatenode"] > 0
   zcashd_archivenode_enabled = var.replicas["zcashd-archivenode"] > 0
   zebrad_archivenode_enabled = var.replicas["zebrad-archivenode"] > 0
+  zebra_testing_enabled      = var.replicas["zebra-testing"] > 0
 
   z3_p2p_ports = {
     mainnet = "8233"
@@ -75,6 +76,36 @@ resource "google_compute_firewall" "sshd" {
   }
 }
 
+# Only allow SSH to Zebra source-build hosts through IAP TCP forwarding by default.
+resource "google_compute_firewall" "sshd_zebra_iap" {
+  name       = "sshd-zebra-iap-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zebrad-archivenode", "zebra-testing"]
+  source_ranges = ["35.235.240.0/20"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+resource "google_compute_firewall" "sshd_zebra_public" {
+  count      = length(var.zebra_public_ssh_source_ranges) > 0 ? 1 : 0
+  name       = "sshd-zebra-public-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zebrad-archivenode", "zebra-testing"]
+  source_ranges = var.zebra_public_ssh_source_ranges
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
 # Only allow SSH to z3 instances through IAP TCP forwarding.
 resource "google_compute_firewall" "sshd_z3_iap" {
   name       = "sshd-z3-iap-firewall"
@@ -102,6 +133,34 @@ resource "google_compute_firewall" "zcashd" {
   allow {
     protocol = "tcp"
     ports    = ["8233"]
+  }
+}
+
+resource "google_compute_firewall" "zebrad_archivenode" {
+  name       = "zebrad-archivenode-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zebrad-archivenode"]
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [tostring(var.zebra_p2p_port)]
+  }
+}
+
+resource "google_compute_firewall" "zebra_testing" {
+  name       = "zebra-testing-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zebra-testing"]
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [tostring(var.zebra_p2p_port)]
   }
 }
 
@@ -201,22 +260,66 @@ module "zcashd-archivenode" {
 module "zebrad-archivenode" {
   count  = local.zebrad_archivenode_enabled ? 1 : 0
   source = "./modules/zebrad-archivenode"
-  # variables
+
   project                     = var.project
   network_name                = var.network_name
   service_account_scopes      = var.service_account_scopes
   region                      = var.region
   zone                        = var.zone
-  params_disk_name            = var.zebra_params_disk_name #"zebra-cargo"  
-  data_disk_name              = var.zebra_data_disk_name   #"zebra-data" 
-  data_disk_size              = var.data_disk_size
-  zebra_release_tag           = var.zebra_release_tag
+  data_disk_name              = var.zebra_data_disk_name
+  data_disk_size              = var.zebra_archivenode_data_disk_size
+  data_disk_type              = var.zebra_data_disk_type
+  data_disk_snapshot          = var.zebra_archivenode_data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  archivenode_count           = var.replicas["zebrad-archivenode"]
+  instance_count              = var.replicas["zebrad-archivenode"]
   instance_type               = var.instance_types["zebrad-archivenode"]
   boot_disk_size              = var.boot_disk_size
+  hostname_prefix             = "zebra-archivenode"
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
+  zebra_repo_url              = "https://github.com/ZcashFoundation/zebra"
+  zebra_repo_ref              = "latest-release"
+  zebra_git_fetch_ref         = ""
+  zebra_network               = var.zebra_network
+  zebra_listen_addr           = format("0.0.0.0:%d", var.zebra_p2p_port)
+  zebra_state_mount_path      = var.zebra_state_mount_path
+  metrics_endpoint_addr       = var.zebra_metrics_endpoint_addr
+  health_listen_addr          = var.zebra_health_listen_addr
+  enable_snapshot_timer       = true
+  snapshot_on_calendar        = var.zebra_archivenode_snapshot_on_calendar
+  depends_on                  = [google_compute_network.zcash_network]
+}
+
+module "zebra-testing" {
+  count  = local.zebra_testing_enabled ? 1 : 0
+  source = "./modules/zebra-testing"
+
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  data_disk_name              = var.zebra_testing_data_disk_name
+  data_disk_size              = var.data_disk_size
+  data_disk_type              = var.zebra_data_disk_type
+  data_disk_snapshot          = var.zebra_testing_data_disk_snapshot
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  instance_count              = var.replicas["zebra-testing"]
+  instance_type               = var.instance_types["zebra-testing"]
+  boot_disk_size              = var.boot_disk_size
+  hostname_prefix             = "zebra-testing"
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  zebra_repo_url              = var.zebra_repo_url
+  zebra_repo_ref              = var.zebra_repo_ref
+  zebra_git_fetch_ref         = var.zebra_git_fetch_ref
+  zebra_network               = var.zebra_network
+  zebra_listen_addr           = format("0.0.0.0:%d", var.zebra_p2p_port)
+  zebra_state_mount_path      = var.zebra_state_mount_path
+  metrics_endpoint_addr       = var.zebra_metrics_endpoint_addr
+  health_listen_addr          = var.zebra_health_listen_addr
+  enable_snapshot_timer       = false
+  snapshot_on_calendar        = var.zebra_archivenode_snapshot_on_calendar
   depends_on                  = [google_compute_network.zcash_network]
 }
 
