@@ -116,9 +116,9 @@ variable "metrics_endpoint_addr" {
 }
 
 variable "health_listen_addr" {
-  description = "Optional Zebra health endpoint listen address"
+  description = "Zebra health endpoint listen address (/healthy and /ready). Set to \"\" to disable."
   type        = string
-  default     = ""
+  default     = "0.0.0.0:8080"
 }
 
 variable "enable_snapshot_timer" {

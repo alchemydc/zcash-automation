@@ -300,7 +300,7 @@ module "zebra-testing" {
   region                      = var.region
   zone                        = var.zone
   data_disk_name              = var.zebra_testing_data_disk_name
-  data_disk_size              = var.data_disk_size
+  data_disk_size              = var.zebra_archivenode_data_disk_size
   data_disk_type              = var.zebra_data_disk_type
   data_disk_snapshot          = var.zebra_testing_data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT

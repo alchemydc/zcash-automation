@@ -160,9 +160,9 @@ variable "zebra_metrics_endpoint_addr" {
 }
 
 variable "zebra_health_listen_addr" {
-  description = "Optional Zebra health endpoint listen address"
+  description = "Zebra health endpoint listen address (/healthy and /ready). Set to \"\" to disable."
   type        = string
-  default     = ""
+  default     = "0.0.0.0:8080"
 }
 
 variable "zebra_public_ssh_source_ranges" {
@@ -178,15 +178,15 @@ variable "zebra_archivenode_snapshot_on_calendar" {
 }
 
 variable "zebra_archivenode_data_disk_snapshot" {
-  description = "Optional snapshot to restore zebrad-archivenode state from"
+  description = "Snapshot to restore zebrad-archivenode state from on disk creation. Defaults to the convention <zebra_data_disk_name>-0-snapshot-latest produced by the in-VM snapshot timer. Set to null to create an empty disk (required for first-ever bootstrap before any snapshot exists)."
   type        = string
-  default     = null
+  default     = "zebra-data-0-snapshot-latest"
 }
 
 variable "zebra_testing_data_disk_snapshot" {
-  description = "Optional snapshot to restore zebra-testing state from. Leave null to create an empty state disk."
+  description = "Snapshot to restore zebra-testing state from on disk creation. Defaults to the archive node's snapshot <zebra_data_disk_name>-0-snapshot-latest. Set to null to create an empty disk."
   type        = string
-  default     = null
+  default     = "zebra-data-0-snapshot-latest"
 }
 
 variable "z3_repo_url" {
