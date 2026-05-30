@@ -102,7 +102,7 @@ variable "zebra_testing_data_disk_name" {
 variable "boot_disk_size" {
   type        = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
-  default     = 10
+  default     = 20
 }
 
 variable "os_image" {

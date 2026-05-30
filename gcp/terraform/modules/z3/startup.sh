@@ -319,15 +319,18 @@ configure_repo() {
 
     mkdir -p config/tls
 
-    if [ "${z3_network}" = "main" ]; then
+    if [ "${z3_network}" = "main" ] || [ "${z3_network}" = "mainnet" ]; then
         network_name="Mainnet"
         zallet_network="main"
+    elif [ "${z3_network}" = "test" ] || [ "${z3_network}" = "testnet" ]; then
+        network_name="Testnet"
+        zallet_network="test"
     elif [ "${z3_network}" = "regtest" ]; then
         network_name="Regtest"
         zallet_network="regtest"
     else
-        network_name="Testnet"
-        zallet_network="test"
+        log "Unsupported z3 network: ${z3_network}"
+        exit 1
     fi
 
     ensure_env_var "NETWORK_NAME" "$network_name"
@@ -387,12 +390,15 @@ EOF
 print_next_steps() {
     local network_name
 
-    if [ "${z3_network}" = "main" ]; then
+    if [ "${z3_network}" = "main" ] || [ "${z3_network}" = "mainnet" ]; then
         network_name="Mainnet"
+    elif [ "${z3_network}" = "test" ] || [ "${z3_network}" = "testnet" ]; then
+        network_name="Testnet"
     elif [ "${z3_network}" = "regtest" ]; then
         network_name="Regtest"
     else
-        network_name="Testnet"
+        log "Unsupported z3 network: ${z3_network}"
+        exit 1
     fi
 
     log "============================================================"

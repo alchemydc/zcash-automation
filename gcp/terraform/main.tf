@@ -13,7 +13,7 @@ locals {
 
   z3_p2p_ports = {
     mainnet = "8233"
-    testnet = "18232"
+    testnet = "18233"
   }
   z3_public_deployments = {
     for k, v in var.z3_deployments :

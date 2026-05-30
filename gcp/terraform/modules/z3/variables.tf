@@ -80,7 +80,7 @@ variable "z3_repo_ref" {
 
 variable "z3_network" {
   type        = string
-  description = "The z3 network to configure. Valid values are main, test, or regtest."
+  description = "The z3 network to configure. Valid values are mainnet, testnet, or regtest. The startup script also accepts main and test aliases."
 }
 
 variable "z3_mount_path" {
