@@ -5,3 +5,4 @@ iam.txt
 *.env
 terraform.tfvars
 terraform.tfstate*
+docs/private/
