@@ -8,7 +8,6 @@ locals {
   zcashd_fullnode_enabled    = var.replicas["zcashd-fullnode"] > 0
   zcashd_privatenode_enabled = var.replicas["zcashd-privatenode"] > 0
   zcashd_archivenode_enabled = var.replicas["zcashd-archivenode"] > 0
-  zebrad_archivenode_enabled = var.replicas["zebrad-archivenode"] > 0
   zebra_testing_enabled      = var.replicas["zebra-testing"] > 0
 
   z3_p2p_ports = {
@@ -19,6 +18,12 @@ locals {
     for k, v in var.z3_deployments :
     k => v
     if v.expose_p2p_public && contains(keys(local.z3_p2p_ports), v.network)
+  }
+
+  # P2P port per Zebra network name (matches the values inside Zebra: Mainnet, Testnet).
+  zebra_p2p_ports = {
+    Mainnet = 8233
+    Testnet = 18233
   }
 }
 
@@ -257,31 +262,36 @@ module "zcashd-archivenode" {
   depends_on                  = [google_compute_network.zcash_network]
 }
 
+moved {
+  from = module.zebrad-archivenode[0]
+  to   = module.zebrad-archivenode["mainnet"]
+}
+
 module "zebrad-archivenode" {
-  count  = local.zebrad_archivenode_enabled ? 1 : 0
-  source = "./modules/zebrad-archivenode"
+  for_each = var.zebrad_archivenode_deployments
+  source   = "./modules/zebrad-archivenode"
 
   project                     = var.project
   network_name                = var.network_name
   service_account_scopes      = var.service_account_scopes
   region                      = var.region
   zone                        = var.zone
-  data_disk_name              = var.zebra_data_disk_name
-  data_disk_size              = var.zebra_archivenode_data_disk_size
+  data_disk_name              = each.value.data_disk_name
+  data_disk_size              = each.value.data_disk_size
   data_disk_type              = var.zebra_data_disk_type
-  data_disk_snapshot          = var.zebra_archivenode_data_disk_snapshot
+  data_disk_snapshot          = each.value.data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  instance_count              = var.replicas["zebrad-archivenode"]
+  instance_count              = each.value.replicas
   instance_type               = var.instance_types["zebrad-archivenode"]
   boot_disk_size              = var.boot_disk_size
-  hostname_prefix             = "zebra-archivenode"
+  hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
   zebra_repo_url              = "https://github.com/ZcashFoundation/zebra"
   zebra_repo_ref              = "latest-release"
   zebra_git_fetch_ref         = ""
-  zebra_network               = var.zebra_network
-  zebra_listen_addr           = format("0.0.0.0:%d", var.zebra_p2p_port)
+  zebra_network               = each.value.network
+  zebra_listen_addr           = format("0.0.0.0:%d", lookup(local.zebra_p2p_ports, each.value.network, var.zebra_p2p_port))
   zebra_state_mount_path      = var.zebra_state_mount_path
   metrics_endpoint_addr       = var.zebra_metrics_endpoint_addr
   health_listen_addr          = var.zebra_health_listen_addr
@@ -323,6 +333,21 @@ module "zebra-testing" {
   depends_on                  = [google_compute_network.zcash_network]
 }
 
+# Look up the latest archivenode-produced snapshot for each z3 deployment whose
+# matching network has an archivenode deployed. Filtered by the labels written
+# by zebra-create-snapshot in the archivenode VM. Deployments whose network has
+# no archivenode (replicas=0) are excluded so the lookup never fails on absence.
+data "google_compute_snapshot" "z3_zebra_state" {
+  for_each = {
+    for k, v in var.z3_deployments :
+    k => v
+    if try(var.zebrad_archivenode_deployments[v.network].replicas, 0) > 0
+  }
+  project     = var.project
+  filter      = "labels.purpose=zebra-state AND labels.network=${lower(each.value.network)}"
+  most_recent = true
+}
+
 module "z3" {
   for_each = var.z3_deployments
   source   = "./modules/z3"
@@ -347,6 +372,7 @@ module "z3" {
   z3_network                  = each.value.network
   z3_mount_path               = var.z3_mount_path
   install_rust_toolchain      = each.value.install_rust_toolchain != null ? each.value.install_rust_toolchain : var.z3_install_rust_toolchain
+  data_disk_snapshot          = try(data.google_compute_snapshot.z3_zebra_state[each.key].name, null)
   depends_on                  = [google_compute_network.zcash_network]
 }
 

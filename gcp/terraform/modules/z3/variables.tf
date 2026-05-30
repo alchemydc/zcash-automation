@@ -98,3 +98,9 @@ variable "hostname_prefix" {
   type        = string
   description = "Prefix used for GCP resource names (instances, disks, addresses)"
 }
+
+variable "data_disk_snapshot" {
+  type        = string
+  description = "Optional GCP snapshot to restore the persistent data disk from on disk creation. When null, the disk is created empty and Zebra syncs from scratch. The snapshot must be a Zebra state snapshot whose chain network matches var.z3_network."
+  default     = null
+}

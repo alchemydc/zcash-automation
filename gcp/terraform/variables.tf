@@ -177,10 +177,33 @@ variable "zebra_archivenode_snapshot_on_calendar" {
   default     = "*-*-* 04:20:00"
 }
 
-variable "zebra_archivenode_data_disk_snapshot" {
-  description = "Snapshot to restore zebrad-archivenode state from on disk creation. Defaults to the convention <zebra_data_disk_name>-0-snapshot-latest produced by the in-VM snapshot timer. Set to null to create an empty disk (required for first-ever bootstrap before any snapshot exists)."
-  type        = string
-  default     = "zebra-data-0-snapshot-latest"
+variable "zebrad_archivenode_deployments" {
+  description = "Map of zebrad-archivenode deployments keyed by environment (e.g. mainnet, testnet). Each entry produces an independent archive node that snapshots its state daily, with labels purpose=zebra-state and network=<lowercased network> so downstream consumers (z3) can discover the right snapshot by network. data_disk_snapshot is optional: set it for restoring a freshly-created disk, or leave null for first-time bootstrap."
+  type = map(object({
+    network            = string
+    replicas           = number
+    data_disk_name     = string
+    data_disk_size     = number
+    hostname_prefix    = string
+    data_disk_snapshot = optional(string)
+  }))
+  default = {
+    mainnet = {
+      network            = "Mainnet"
+      replicas           = 0
+      data_disk_name     = "zebra-data"
+      data_disk_size     = 300
+      hostname_prefix    = "zebra-archivenode"
+      data_disk_snapshot = "zebra-data-0-snapshot-latest"
+    }
+    testnet = {
+      network         = "Testnet"
+      replicas        = 0
+      data_disk_name  = "zebra-testnet-data"
+      data_disk_size  = 100
+      hostname_prefix = "zebra-archivenode-testnet"
+    }
+  }
 }
 
 variable "zebra_testing_data_disk_snapshot" {

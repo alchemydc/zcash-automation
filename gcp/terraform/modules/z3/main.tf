@@ -13,10 +13,15 @@ resource "google_compute_address" "z3_internal" {
 }
 
 resource "google_compute_disk" "z3_data" {
-  count = var.instance_count
-  name  = format("%s-%d", var.data_disk_name, count.index)
-  type  = var.data_disk_type
-  size  = var.data_disk_size
+  count    = var.instance_count
+  name     = format("%s-%d", var.data_disk_name, count.index)
+  type     = var.data_disk_type
+  size     = var.data_disk_size
+  snapshot = var.data_disk_snapshot
+
+  lifecycle {
+    ignore_changes = [snapshot]
+  }
 }
 
 resource "google_compute_instance" "z3" {
@@ -55,6 +60,7 @@ resource "google_compute_instance" "z3" {
       data_disk_name         = google_compute_disk.z3_data[count.index].name,
       gcloud_project         = var.project,
       install_rust_toolchain = var.install_rust_toolchain,
+      restored_from_snapshot = var.data_disk_snapshot != null,
       z3_mount_path          = var.z3_mount_path,
       z3_network             = var.z3_network,
       z3_repo_ref            = var.z3_repo_ref,

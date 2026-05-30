@@ -290,7 +290,7 @@ curl -fsS \
   -H "Authorization: Bearer $token" \
   -H "Content-Type: application/json" \
   "https://compute.googleapis.com/compute/v1/projects/$PROJECT/zones/$ZONE/disks/$DISK_NAME/createSnapshot" \
-  -d "{\"name\":\"$SNAPSHOT_NAME\"}" >/dev/null
+  -d "{\"name\":\"$SNAPSHOT_NAME\",\"labels\":{\"purpose\":\"zebra-state\",\"network\":\"${lower(zebra_network)}\",\"source-disk\":\"${data_disk_name}\"}}" >/dev/null
 
 log "Starting zebrad after snapshot request"
 systemctl start zebrad.service

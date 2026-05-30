@@ -377,6 +377,26 @@ exec ./check-zebra-readiness.sh
 EOF
     chmod 0755 /usr/local/bin/z3-check-zebra-readiness
 
+    # Zebra-only start. Explicit service name keeps default-on zaino/zallet out.
+    cat <<'EOF' > /usr/local/bin/z3-start-zebra
+#!/bin/bash
+set -euo pipefail
+cd /opt/z3
+exec docker compose up -d zebra
+EOF
+    chmod 0755 /usr/local/bin/z3-start-zebra
+
+    # Monitoring-only start. Explicit service list (not just --profile monitoring)
+    # so that any depends_on inside the monitoring profile cannot pull in
+    # default-on zaino/zallet.
+    cat <<'EOF' > /usr/local/bin/z3-start-monitoring
+#!/bin/bash
+set -euo pipefail
+cd /opt/z3
+exec docker compose --profile monitoring up -d --no-deps jaeger prometheus grafana alertmanager
+EOF
+    chmod 0755 /usr/local/bin/z3-start-monitoring
+
     cat <<'EOF' > /usr/local/bin/z3-start-full-stack
 #!/bin/bash
 set -euo pipefail
@@ -385,6 +405,81 @@ exec docker compose up -d
 EOF
     chmod 0755 /usr/local/bin/z3-start-full-stack
 
+}
+
+fix_restored_disk_permissions() {
+    if [ "${restored_from_snapshot}" != "true" ]; then
+        log "No snapshot restore in effect; skipping zebra permission fix"
+        return
+    fi
+
+    if [ ! -x "$APP_DIR/scripts/fix-permissions.sh" ]; then
+        log "WARNING: $APP_DIR/scripts/fix-permissions.sh not found or not executable; skipping fix-permissions for restored disk"
+        return
+    fi
+
+    log "Fixing permissions on restored Zebra state disk at $DATA_MOUNT_PATH"
+    ( cd "$APP_DIR" && ./scripts/fix-permissions.sh zebra "$DATA_MOUNT_PATH" )
+}
+
+install_baseline_services() {
+    if [ "${z3_network}" = "regtest" ]; then
+        log "Regtest: skipping z3-zebra.service and z3-monitoring.service (regtest requires interactive init via scripts/regtest-init.sh)"
+        return
+    fi
+
+    log "Installing z3-zebra.service (zebra only)"
+    cat <<EOF > /etc/systemd/system/z3-zebra.service
+[Unit]
+Description=z3 Zebra service (chain sync only; no zaino/zallet)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+RequiresMountsFor=${z3_mount_path}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+Environment=HOME=/home/$APP_USER
+ExecStart=/usr/local/bin/z3-start-zebra
+ExecStop=/usr/bin/docker compose -f $APP_DIR/docker-compose.yml stop zebra
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    log "Installing z3-monitoring.service (jaeger/prometheus/grafana/alertmanager)"
+    cat <<EOF > /etc/systemd/system/z3-monitoring.service
+[Unit]
+Description=z3 monitoring services (jaeger, prometheus, grafana, alertmanager)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+Environment=HOME=/home/$APP_USER
+ExecStart=/usr/local/bin/z3-start-monitoring
+ExecStop=/usr/bin/docker compose -f $APP_DIR/docker-compose.yml --profile monitoring stop jaeger prometheus grafana alertmanager
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable z3-zebra.service z3-monitoring.service
+
+    if ! systemctl start z3-zebra.service; then
+        log "WARNING: z3-zebra.service failed to start; check 'systemctl status z3-zebra.service'"
+    fi
+    if ! systemctl start z3-monitoring.service; then
+        log "WARNING: z3-monitoring.service failed to start; check 'systemctl status z3-monitoring.service'"
+    fi
 }
 
 print_next_steps() {
@@ -415,18 +510,28 @@ print_next_steps() {
         log "  for optional Zcashd: docker compose --env-file .env.regtest --profile zcashd up -d zcashd"
 
     else
+        log "BASELINE SERVICES STARTED AUTOMATICALLY:"
+        log "  - z3-zebra.service       (Zebra chain sync)"
+        log "  - z3-monitoring.service  (Jaeger, Prometheus, Grafana, Alertmanager)"
+        log "  Zaino, Zallet, and Zcashd are NOT started by default."
+        log ""
         log "NEXT STEPS:"
         log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
         log "  2. Switch to the app user: sudo -iu z3"
-        log "  3. Start Zebra for initial chain sync:"
-        log "       cd /opt/z3 && docker compose up -d zebra"
-        log "  4. Monitor sync progress:  cd /opt/z3 && ./check-zebra-readiness.sh"
-        log "  5. Once synced, start the full stack:"
+        log "  3. Monitor Zebra sync:     /usr/local/bin/z3-check-zebra-readiness"
+        log "                             (or:  curl http://localhost:8080/ready)"
+        log "  4. When Zebra is synced, start the rest of the stack:"
         log "       cd /opt/z3 && docker compose up -d"
+        log "       (this brings up Zaino and Zallet alongside the running Zebra+monitoring)"
         log "  for optional Zcashd: docker compose --profile zcashd up -d zcashd"
         log ""
-        log "NOTE: Zebra must fully sync before Zaino and Zallet can start."
-        log "      This may take several hours on $network_name."
+        if [ "${restored_from_snapshot}" = "true" ]; then
+            log "NOTE: This disk was restored from a Zebra state snapshot. Sync should"
+            log "      complete in minutes rather than hours."
+        else
+            log "NOTE: No snapshot was available; Zebra is syncing from genesis."
+            log "      This may take several hours on $network_name."
+        fi
     fi
 
     log "============================================================"
@@ -445,6 +550,8 @@ ensure_data_disk
 ensure_rage
 checkout_repo
 configure_repo
+fix_restored_disk_permissions
 pull_or_build_images
 install_runtime_helpers
+install_baseline_services
 print_next_steps
