@@ -18,6 +18,10 @@ resource "google_compute_disk" "zebra_state" {
   type     = var.data_disk_type
   size     = var.data_disk_size
   snapshot = var.data_disk_snapshot
+
+  lifecycle {
+    ignore_changes = [snapshot]
+  }
 }
 
 resource "google_compute_instance" "zebra_testing" {
