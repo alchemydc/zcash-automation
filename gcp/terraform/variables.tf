@@ -7,7 +7,6 @@ variable "replicas" {
     zcashd-fullnode    = 0
     zcashd-privatenode = 0
     zebrad-archivenode = 0
-    zebra-testing      = 0
   }
 }
 
@@ -20,7 +19,6 @@ variable "instance_types" {
     zcashd-fullnode    = "n1-standard-2"
     zcashd-privatenode = "n1-standard-2"
     zebrad-archivenode = "e2-standard-4"
-    zebra-testing      = "e2-standard-4"
   }
 }
 
@@ -93,12 +91,6 @@ variable "zebra_archivenode_data_disk_size" {
   default     = 300
 }
 
-variable "zebra_testing_data_disk_name" {
-  type        = string
-  description = "Base name of the persistent state disk used by the zebra-testing module"
-  default     = "zebra-testing-data"
-}
-
 variable "boot_disk_size" {
   type        = number
   description = "Size (in GB) of the ephemeral boot disk used for all instances"
@@ -109,30 +101,6 @@ variable "os_image" {
   type        = string
   description = "The GCP image to use for VM boot disks"
   default     = "debian-cloud/debian-13"
-}
-
-variable "zebra_repo_url" {
-  description = "The Zebra repository to clone on provisioned zebra-testing hosts"
-  type        = string
-  default     = "https://github.com/ZcashFoundation/zebra"
-}
-
-variable "zebra_repo_ref" {
-  description = "The branch, tag, or commit to check out in the Zebra repository for zebra-testing"
-  type        = string
-  default     = "main"
-}
-
-variable "zebra_git_fetch_ref" {
-  description = "Optional explicit git ref to fetch before checkout for zebra-testing, for example refs/pull/123/head"
-  type        = string
-  default     = ""
-}
-
-variable "zebra_network" {
-  description = "The Zebra network name, such as Mainnet, Testnet, or Regtest"
-  type        = string
-  default     = "Mainnet"
 }
 
 variable "zebra_p2p_port" {
@@ -208,10 +176,31 @@ variable "zebrad_archivenode_deployments" {
   }
 }
 
-variable "zebra_testing_data_disk_snapshot" {
-  description = "Snapshot to restore zebra-testing state from on disk creation. Defaults to the archive node's snapshot <zebra_data_disk_name>-0-snapshot-latest. Set to null to create an empty disk."
+variable "zebra_testing_instance_type" {
+  description = "GCP machine type for all zebra-testing deployments"
   type        = string
-  default     = "zebra-data-0-snapshot-latest"
+  default     = "e2-standard-4"
+}
+
+variable "zebra_testing_deployments" {
+  description = <<-EOT
+    Map of zebra-testing deployments keyed by a short slug (e.g. "v4.5.3", "pr-10513").
+    Each entry produces an independent zebra-testing deployment. Set replicas > 1 to
+    deploy multiple identical copies of one deployment. data_disk_snapshot is optional:
+    set it to restore from an existing snapshot, or omit for a fresh empty disk.
+  EOT
+  type = map(object({
+    network             = string
+    replicas            = number
+    data_disk_name      = string
+    data_disk_size      = number
+    hostname_prefix     = string
+    data_disk_snapshot  = optional(string)
+    zebra_repo_url      = optional(string, "https://github.com/ZcashFoundation/zebra")
+    zebra_repo_ref      = optional(string, "latest-release")
+    zebra_git_fetch_ref = optional(string, "")
+  }))
+  default = {}
 }
 
 variable "z3_repo_url" {

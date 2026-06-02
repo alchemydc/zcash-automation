@@ -45,7 +45,8 @@ variable "data_disk_type" {
 
 variable "data_disk_snapshot" {
   type        = string
-  description = "Snapshot to restore the persistent state disk from"
+  description = "Optional snapshot to restore the persistent state disk from. Set to null/omit for a fresh empty disk."
+  default     = null
 }
 
 variable "instance_count" {

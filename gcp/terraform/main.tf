@@ -8,7 +8,6 @@ locals {
   zcashd_fullnode_enabled    = var.replicas["zcashd-fullnode"] > 0
   zcashd_privatenode_enabled = var.replicas["zcashd-privatenode"] > 0
   zcashd_archivenode_enabled = var.replicas["zcashd-archivenode"] > 0
-  zebra_testing_enabled      = var.replicas["zebra-testing"] > 0
 
   z3_p2p_ports = {
     mainnet = "8233"
@@ -300,31 +299,36 @@ module "zebrad-archivenode" {
   depends_on                  = [google_compute_network.zcash_network]
 }
 
+moved {
+  from = module.zebra-testing[0]
+  to   = module.zebra-testing["fix-5709-genesis"]
+}
+
 module "zebra-testing" {
-  count  = local.zebra_testing_enabled ? 1 : 0
-  source = "./modules/zebra-testing"
+  for_each = var.zebra_testing_deployments
+  source   = "./modules/zebra-testing"
 
   project                     = var.project
   network_name                = var.network_name
   service_account_scopes      = var.service_account_scopes
   region                      = var.region
   zone                        = var.zone
-  data_disk_name              = var.zebra_testing_data_disk_name
-  data_disk_size              = var.zebra_archivenode_data_disk_size
+  data_disk_name              = each.value.data_disk_name
+  data_disk_size              = each.value.data_disk_size
   data_disk_type              = var.zebra_data_disk_type
-  data_disk_snapshot          = var.zebra_testing_data_disk_snapshot
+  data_disk_snapshot          = each.value.data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
-  instance_count              = var.replicas["zebra-testing"]
-  instance_type               = var.instance_types["zebra-testing"]
+  instance_count              = each.value.replicas
+  instance_type               = var.zebra_testing_instance_type
   boot_disk_size              = var.boot_disk_size
-  hostname_prefix             = "zebra-testing"
+  hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
-  zebra_repo_url              = var.zebra_repo_url
-  zebra_repo_ref              = var.zebra_repo_ref
-  zebra_git_fetch_ref         = var.zebra_git_fetch_ref
-  zebra_network               = var.zebra_network
-  zebra_listen_addr           = format("0.0.0.0:%d", var.zebra_p2p_port)
+  zebra_repo_url              = each.value.zebra_repo_url
+  zebra_repo_ref              = each.value.zebra_repo_ref
+  zebra_git_fetch_ref         = each.value.zebra_git_fetch_ref
+  zebra_network               = each.value.network
+  zebra_listen_addr           = format("0.0.0.0:%d", lookup(local.zebra_p2p_ports, each.value.network, var.zebra_p2p_port))
   zebra_state_mount_path      = var.zebra_state_mount_path
   metrics_endpoint_addr       = var.zebra_metrics_endpoint_addr
   health_listen_addr          = var.zebra_health_listen_addr
