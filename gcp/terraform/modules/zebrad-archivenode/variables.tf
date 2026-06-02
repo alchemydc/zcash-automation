@@ -85,8 +85,9 @@ variable "zebra_repo_url" {
 }
 
 variable "zebra_repo_ref" {
-  description = "The branch, tag, or commit to check out in the Zebra repository"
+  description = "The branch, tag, or commit to check out in the Zebra repository. The sentinel \"latest-release\" resolves at startup to the most recent v* tag on the remote."
   type        = string
+  default     = "latest-release"
 }
 
 variable "zebra_git_fetch_ref" {

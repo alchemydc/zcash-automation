@@ -288,8 +288,8 @@ module "zebrad-archivenode" {
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
   zebra_repo_url              = "https://github.com/ZcashFoundation/zebra"
-  zebra_repo_ref              = "latest-release"
-  zebra_git_fetch_ref         = ""
+  zebra_repo_ref              = each.value.zebra_repo_ref
+  zebra_git_fetch_ref         = each.value.zebra_git_fetch_ref
   zebra_network               = each.value.network
   zebra_listen_addr           = format("0.0.0.0:%d", lookup(local.zebra_p2p_ports, each.value.network, var.zebra_p2p_port))
   zebra_state_mount_path      = var.zebra_state_mount_path

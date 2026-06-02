@@ -180,12 +180,14 @@ variable "zebra_archivenode_snapshot_on_calendar" {
 variable "zebrad_archivenode_deployments" {
   description = "Map of zebrad-archivenode deployments keyed by environment (e.g. mainnet, testnet). Each entry produces an independent archive node that snapshots its state daily, with labels purpose=zebra-state and network=<lowercased network> so downstream consumers (z3) can discover the right snapshot by network. data_disk_snapshot is optional: set it for restoring a freshly-created disk, or leave null for first-time bootstrap."
   type = map(object({
-    network            = string
-    replicas           = number
-    data_disk_name     = string
-    data_disk_size     = number
-    hostname_prefix    = string
-    data_disk_snapshot = optional(string)
+    network             = string
+    replicas            = number
+    data_disk_name      = string
+    data_disk_size      = number
+    hostname_prefix     = string
+    data_disk_snapshot  = optional(string)
+    zebra_repo_ref      = optional(string, "latest-release")
+    zebra_git_fetch_ref = optional(string, "")
   }))
   default = {
     mainnet = {
