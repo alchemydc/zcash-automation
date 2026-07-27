@@ -339,13 +339,16 @@ module "zebra-testing" {
 
 # Look up the latest archivenode-produced snapshot for each z3 deployment whose
 # matching network has an archivenode deployed. Filtered by the labels written
-# by zebra-create-snapshot in the archivenode VM. Deployments whose network has
-# no archivenode (replicas=0) are excluded so the lookup never fails on absence.
+# by zebra-create-snapshot in the archivenode VM. Excluded from the lookup (so
+# a missing snapshot never blocks unrelated plans): z3 deployments with 0
+# replicas, and networks with no archivenode deployed. Note: enabling a z3
+# deployment before its network's archivenode has produced its first snapshot
+# still errors here until the daily snapshot timer fires.
 data "google_compute_snapshot" "z3_zebra_state" {
   for_each = {
     for k, v in var.z3_deployments :
     k => v
-    if try(var.zebrad_archivenode_deployments[v.network].replicas, 0) > 0
+    if v.replicas > 0 && try(var.zebrad_archivenode_deployments[v.network].replicas, 0) > 0
   }
   project     = var.project
   filter      = "labels.purpose=zebra-state AND labels.network=${lower(each.value.network)}"
