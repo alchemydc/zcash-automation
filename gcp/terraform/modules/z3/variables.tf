@@ -90,8 +90,8 @@ variable "z3_mount_path" {
 
 variable "install_rust_toolchain" {
   type        = bool
-  description = "Whether to install rustup/cargo for the z3 app user"
-  default     = true
+  description = "Whether to install rustup/cargo for the z3 app user. Only needed for the opt-in source-build overlay (scripts/vendor.sh + docker-compose.build.yml); upstream z3 pulls pinned images by default."
+  default     = false
 }
 
 variable "hostname_prefix" {

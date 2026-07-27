@@ -19,6 +19,19 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
 }
 
+# Normalize the requested network to the canonical token upstream z3 uses
+# (mainnet|testnet|regtest) and derive the matching Zebra health port.
+case "${z3_network}" in
+    main|mainnet) NETWORK="mainnet"; READINESS_PORT="8080" ;;
+    test|testnet) NETWORK="testnet"; READINESS_PORT="18080" ;;
+    regtest)      NETWORK="regtest"; READINESS_PORT="28080" ;;
+    *) log "Unsupported z3 network: ${z3_network}"; exit 1 ;;
+esac
+
+# Every compose invocation selects the network via its committed env file and
+# layers our gitignored .env (host overrides) on top; the later file wins.
+COMPOSE_ENV_FILES="--env-file .env.$NETWORK --env-file .env"
+
 ensure_user() {
     if ! id -u "$APP_USER" >/dev/null 2>&1; then
         useradd -m -s /bin/bash "$APP_USER"
@@ -277,7 +290,6 @@ checkout_repo() {
         git checkout "${z3_repo_ref}"
     fi
 
-    git submodule update --init --recursive
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 }
 
@@ -300,108 +312,68 @@ ensure_env_var() {
 }
 
 configure_repo() {
-    local network_name
-    local zallet_network
-
-    log "Configuring z3 repository"
+    log "Configuring z3 repository for network $NETWORK"
     cd "$APP_DIR"
 
-    if [ ! -f .env ]; then
-        if [ -f .env.example ]; then
-            cp .env.example .env
-        else
-            touch .env
-        fi
-    fi
+    # Materialize per-network config (zaino.toml, zallet.toml, optional
+    # zebra.toml for regtest) and the Zallet identity using upstream's
+    # idempotent setup script. Run as the app user so the files it creates are
+    # owned by the account the containers and helper scripts run as.
+    su - "$APP_USER" -c "cd '$APP_DIR' && ./scripts/setup-network.sh '$NETWORK'"
 
-    chown "$APP_USER:$APP_USER" .env
-    chmod u+rw .env
-
-    mkdir -p config/tls
-
-    if [ "${z3_network}" = "main" ] || [ "${z3_network}" = "mainnet" ]; then
-        network_name="Mainnet"
-        zallet_network="main"
-    elif [ "${z3_network}" = "test" ] || [ "${z3_network}" = "testnet" ]; then
-        network_name="Testnet"
-        zallet_network="test"
-    elif [ "${z3_network}" = "regtest" ]; then
-        network_name="Regtest"
-        zallet_network="regtest"
-    else
-        log "Unsupported z3 network: ${z3_network}"
-        exit 1
-    fi
-
-    ensure_env_var "NETWORK_NAME" "$network_name"
-    ensure_env_var "Z3_ZEBRA_DATA_PATH" "$DATA_MOUNT_PATH"
-
-    if [ ! -f config/tls/zaino.crt ] || [ ! -f config/tls/zaino.key ]; then
-        log "Generating Zaino TLS certificate"
-        openssl req -x509 -newkey rsa:4096 \
-            -keyout config/tls/zaino.key \
-            -out config/tls/zaino.crt \
-            -sha256 -days 365 -nodes \
-            -subj "/CN=localhost" \
-            -addext "subjectAltName=DNS:localhost,DNS:zaino,IP:127.0.0.1"
-        chmod a+r config/tls/zaino.key
-    fi
-
-    if [ ! -f config/zallet_identity.txt ]; then
-        log "Generating Zallet identity file"
-        rage-keygen -o config/zallet_identity.txt
-    fi
-
-    if [ -f config/zallet.toml ]; then
-        sed -i.bak "0,/^network = \".*\"/s//network = \"$${zallet_network}\"/" config/zallet.toml
-    fi
+    # Redirect Zebra chain state onto the persistent data disk. This override
+    # must ride the --env-file chain (compose interpolates the volumes block
+    # only from --env-file files), so we keep it in the gitignored .env that we
+    # layer last on every invocation.
+    ensure_env_var "Z3_CHAIN_DATA_PATH" "$DATA_MOUNT_PATH"
 }
 
-pull_or_build_images() {
-    log "Pulling prebuilt z3 images"
+pull_images() {
+    log "Pulling pinned z3 images for network $NETWORK"
     cd "$APP_DIR"
-    if ! docker compose pull; then
-        log "Pull failed for some images, falling back to local build"
-        docker compose build
+    # Default compose has no build context (source builds are an opt-in overlay),
+    # so there is no local-build fallback; just surface a clear warning on failure.
+    if ! docker compose $COMPOSE_ENV_FILES pull; then
+        log "WARNING: 'docker compose pull' failed; check image pins and network access"
     fi
 }
 
 install_runtime_helpers() {
     log "Installing runtime helper scripts"
 
-    cat <<'EOF' > /usr/local/bin/z3-check-zebra-readiness
+    cat <<EOF > /usr/local/bin/z3-check-zebra-readiness
 #!/bin/bash
 set -euo pipefail
 cd /opt/z3
-exec ./check-zebra-readiness.sh
+exec ./scripts/check-zebra-readiness.sh $READINESS_PORT
 EOF
     chmod 0755 /usr/local/bin/z3-check-zebra-readiness
 
     # Zebra-only start. Explicit service name keeps default-on zaino/zallet out.
-    cat <<'EOF' > /usr/local/bin/z3-start-zebra
+    cat <<EOF > /usr/local/bin/z3-start-zebra
 #!/bin/bash
 set -euo pipefail
 cd /opt/z3
-exec docker compose up -d zebra
+exec docker compose $COMPOSE_ENV_FILES up -d zebra
 EOF
     chmod 0755 /usr/local/bin/z3-start-zebra
 
     # Monitoring-only start. Explicit service list (not just --profile monitoring)
     # so that any depends_on inside the monitoring profile cannot pull in
     # default-on zaino/zallet.
-    cat <<'EOF' > /usr/local/bin/z3-start-monitoring
+    cat <<EOF > /usr/local/bin/z3-start-monitoring
 #!/bin/bash
 set -euo pipefail
 cd /opt/z3
-exec docker compose --profile monitoring up -d --no-deps jaeger prometheus grafana alertmanager
+exec docker compose $COMPOSE_ENV_FILES --profile monitoring up -d --no-deps jaeger prometheus grafana alertmanager
 EOF
     chmod 0755 /usr/local/bin/z3-start-monitoring
 
-    cat <<'EOF' > /usr/local/bin/z3-start-full-stack
+    cat <<EOF > /usr/local/bin/z3-start-full-stack
 #!/bin/bash
 set -euo pipefail
 cd /opt/z3
-exec docker compose up -d
+exec docker compose $COMPOSE_ENV_FILES up -d
 EOF
     chmod 0755 /usr/local/bin/z3-start-full-stack
 
@@ -423,7 +395,7 @@ fix_restored_disk_permissions() {
 }
 
 install_baseline_services() {
-    if [ "${z3_network}" = "regtest" ]; then
+    if [ "$NETWORK" = "regtest" ]; then
         log "Regtest: skipping z3-zebra.service and z3-monitoring.service (regtest requires interactive init via scripts/regtest-init.sh)"
         return
     fi
@@ -444,7 +416,7 @@ User=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment=HOME=/home/$APP_USER
 ExecStart=/usr/local/bin/z3-start-zebra
-ExecStop=/usr/bin/docker compose -f $APP_DIR/docker-compose.yml stop zebra
+ExecStop=/usr/bin/docker compose $COMPOSE_ENV_FILES stop zebra
 
 [Install]
 WantedBy=multi-user.target
@@ -465,7 +437,7 @@ User=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment=HOME=/home/$APP_USER
 ExecStart=/usr/local/bin/z3-start-monitoring
-ExecStop=/usr/bin/docker compose -f $APP_DIR/docker-compose.yml --profile monitoring stop jaeger prometheus grafana alertmanager
+ExecStop=/usr/bin/docker compose $COMPOSE_ENV_FILES --profile monitoring stop jaeger prometheus grafana alertmanager
 
 [Install]
 WantedBy=multi-user.target
@@ -483,54 +455,39 @@ EOF
 }
 
 print_next_steps() {
-    local network_name
-
-    if [ "${z3_network}" = "main" ] || [ "${z3_network}" = "mainnet" ]; then
-        network_name="Mainnet"
-    elif [ "${z3_network}" = "test" ] || [ "${z3_network}" = "testnet" ]; then
-        network_name="Testnet"
-    elif [ "${z3_network}" = "regtest" ]; then
-        network_name="Regtest"
-    else
-        log "Unsupported z3 network: ${z3_network}"
-        exit 1
-    fi
-
     log "============================================================"
-    log "z3 host initialization complete (network: $network_name)"
+    log "z3 host initialization complete (network: $NETWORK)"
     log ""
 
-    if [ "${z3_network}" = "regtest" ]; then
+    if [ "$NETWORK" = "regtest" ]; then
         log "NEXT STEPS:"
         log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
         log "  2. Switch to the app user: sudo -iu z3"
         log "  3. Run first-time setup:   cd /opt/z3 && ./scripts/regtest-init.sh"
         log "     (generates wallet password hash, mines block 1, inits wallet)"
-        log "  4. Start the full stack:   cd /opt/z3 && docker compose --env-file .env.regtest up -d"
-        log "  for optional Zcashd: docker compose --env-file .env.regtest --profile zcashd up -d zcashd"
+        log "  4. Start the full stack:   cd /opt/z3 && docker compose $COMPOSE_ENV_FILES up -d"
 
     else
         log "BASELINE SERVICES STARTED AUTOMATICALLY:"
         log "  - z3-zebra.service       (Zebra chain sync)"
         log "  - z3-monitoring.service  (Jaeger, Prometheus, Grafana, Alertmanager)"
-        log "  Zaino, Zallet, and Zcashd are NOT started by default."
+        log "  Zaino and Zallet are NOT started by default."
         log ""
         log "NEXT STEPS:"
         log "  1. SSH into the instance:  gcloud compute ssh <hostname> --tunnel-through-iap"
         log "  2. Switch to the app user: sudo -iu z3"
         log "  3. Monitor Zebra sync:     /usr/local/bin/z3-check-zebra-readiness"
-        log "                             (or:  curl http://localhost:8080/ready)"
+        log "                             (or:  curl http://localhost:$READINESS_PORT/ready)"
         log "  4. When Zebra is synced, start the rest of the stack:"
-        log "       cd /opt/z3 && docker compose up -d"
+        log "       cd /opt/z3 && docker compose $COMPOSE_ENV_FILES up -d"
         log "       (this brings up Zaino and Zallet alongside the running Zebra+monitoring)"
-        log "  for optional Zcashd: docker compose --profile zcashd up -d zcashd"
         log ""
         if [ "${restored_from_snapshot}" = "true" ]; then
             log "NOTE: This disk was restored from a Zebra state snapshot. Sync should"
             log "      complete in minutes rather than hours."
         else
             log "NOTE: No snapshot was available; Zebra is syncing from genesis."
-            log "      This may take several hours on $network_name."
+            log "      This may take several hours on $NETWORK."
         fi
     fi
 
@@ -551,7 +508,7 @@ ensure_rage
 checkout_repo
 configure_repo
 fix_restored_disk_permissions
-pull_or_build_images
+pull_images
 install_runtime_helpers
 install_baseline_services
 print_next_steps

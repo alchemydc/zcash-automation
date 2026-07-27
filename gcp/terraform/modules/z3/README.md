@@ -6,31 +6,32 @@ This module provisions a GCE VM for the Z3 stack and configures it during startu
 - configure Docker to use the `journald` log driver by default
 - clone the z3 repository
 - install `rage` and `rage-keygen`
-- optionally install a Rust toolchain (`rustup`, `cargo`, `rustfmt`, `clippy`) for the `z3` app user
+- optionally install a Rust toolchain (`rustup`, `cargo`, `rustfmt`, `clippy`) for the `z3` app user (off by default; only needed for the opt-in source-build overlay)
 - provision and mount a dedicated persistent data disk for Zebra chain state
-- build the required container images
+- pull the pinned container images
 - start the initial Zebra-only sync phase via systemd
 
 ## Provisioning Behavior
 
-On first boot the startup script performs the repo's documented production flow:
+On first boot the startup script drives upstream z3's documented production flow:
 
-1. mount the persistent disk at the configured Zebra data path
+1. mount the persistent disk and point Zebra chain state at it via
+   `Z3_CHAIN_DATA_PATH` (written to the gitignored `/opt/z3/.env`)
 2. clone and update the z3 repo under `/opt/z3`
-3. generate TLS certificates for Zaino if they do not exist
-4. generate `config/zallet_identity.txt` with `rage-keygen` if it does not exist
-5. build the required Docker images for Zaino and Zallet
-6. start only Zebra so it can complete the initial sync
+3. run `scripts/setup-network.sh <network>` to materialize the per-network
+   config (`config/<network>/zaino.toml`, `zallet.toml`, regtest `zebra.toml`)
+   and generate the Zallet identity (`config/<network>/zallet_identity.txt`)
+   with `rage-keygen`
+4. pull the pinned Zebra/Zaino/Zallet images (no local image build; source
+   builds are an opt-in upstream overlay)
+5. start only Zebra so it can complete the initial sync
 
-Temporary workaround: `startup.sh` currently makes `config/tls/zaino.key` world-readable so the Zaino container can read it. This should be replaced with a proper ownership or runtime-user fix later.
+Network selection is by env file: every compose invocation uses
+`--env-file .env.<network> --env-file .env`, layering the host's
+`Z3_CHAIN_DATA_PATH` override on top of the committed per-network env file.
 
-Once Zebra is near tip, operators can bring up the full stack with:
-
-```console
-sudo systemctl start z3-stack.service
-```
-
-Or with the convenience wrapper:
+Once Zebra is near tip, operators can bring up the full stack with the
+convenience wrapper:
 
 ```console
 sudo /usr/local/bin/z3-start-full-stack
