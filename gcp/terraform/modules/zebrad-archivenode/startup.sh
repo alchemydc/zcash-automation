@@ -210,6 +210,11 @@ EOF
     echo "ZEBRA_HEALTH__LISTEN_ADDR=${health_listen_addr}" >> /etc/default/zebrad
   fi
 
+  if [ -n "${rpc_listen_addr}" ]; then
+    echo "ZEBRA_RPC__LISTEN_ADDR=${rpc_listen_addr}" >> /etc/default/zebrad
+    echo "ZEBRA_RPC__ENABLE_COOKIE_AUTH=false" >> /etc/default/zebrad
+  fi
+
   chmod 0644 /etc/default/zebrad
 }
 
