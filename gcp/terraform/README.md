@@ -79,17 +79,17 @@ Support for GCP's Stackdriver platform has been enabled, which makes it easy to 
 Zcash chain state is synchronized over the peer to peer (p2p) network and can take a substantial amount of time to build from scratch. The Zebra modules in this repo now rely on persistent disks and Compute Engine snapshots rather than GCS tarball or rsync backups. The intended workflow is to let a long-lived archive node maintain fresh chain state and publish snapshots, then restore those snapshots into other nodes that should come up quickly.
 
 ## Zebra Roles
-The repo now has two distinct source-built Zebra roles with different operational goals:
+The repo now has two distinct Zebra roles with different operational goals:
 
-* `zebrad-archivenode`: the long-lived baseline node. It clones a configurable Zebra repo and ref, runs with env-first configuration via `ZEBRA_*` variables, keeps chain state on a dedicated persistent disk, and cuts recurring snapshots of that disk on a systemd timer.
-* `zebra-testing`: the disposable validation node. It can restore its persistent state disk from a snapshot, builds Zebra from a configurable repo and ref, and is intended for branch and PR testing. It does not publish recurring snapshots of its own.
+* `zebrad-archivenode`: the long-lived baseline node. It installs the official zebrad release binary (checksum-verified) from [GitHub releases](https://github.com/ZcashFoundation/zebra/releases), runs with env-first configuration via `ZEBRA_*` variables, keeps chain state on a dedicated persistent disk, and cuts recurring snapshots of that disk on a systemd timer.
+* `zebra-testing`: the disposable validation node. It can restore its persistent state disk from a snapshot and is intended for branch and PR testing. By default it installs the official release binary; setting a git ref switches it to building Zebra from source (required for forks, branches, and PRs, which have no published binaries). It does not publish recurring snapshots of its own.
 
 In practice, the archive node is what keeps the snapshot pipeline warm. The testing node is what you point at a candidate branch or PR once you already have a usable archive snapshot.
 
 Both roles are configured through per-deployment maps in `terraform.tfvars`:
 
-* `zebrad_archivenode_deployments`: one entry per network (e.g. `mainnet`, `testnet`). Each entry sets its own `replicas`, `data_disk_name`, `data_disk_size`, `hostname_prefix`, and optionally `zebra_repo_ref` / `zebra_git_fetch_ref` (defaulting to the latest tagged release of `ZcashFoundation/zebra`) and `data_disk_snapshot` for restoring a freshly created disk.
-* `zebra_testing_deployments`: one entry per test deployment, keyed by a short slug (e.g. `pr-10513`). Each entry can additionally point `zebra_repo_url` at a fork.
+* `zebrad_archivenode_deployments`: one entry per network (e.g. `mainnet`, `testnet`). Each entry sets its own `replicas`, `data_disk_name`, `data_disk_size`, `hostname_prefix`, and optionally `zebra_release_tag` (defaulting to `latest`, which resolves the newest published release binary at boot) and `data_disk_snapshot` for restoring a freshly created disk.
+* `zebra_testing_deployments`: one entry per test deployment, keyed by a short slug (e.g. `pr-10513`). Each entry defaults to installing the release binary selected by `zebra_release_tag`; setting `zebra_repo_ref` or `zebra_git_fetch_ref` builds from source instead, and `zebra_repo_url` can point at a fork.
 
 By default, SSH to `zebrad-archivenode` and `zebra-testing` is not exposed publicly. Those hosts are reachable on `tcp/22` only through Google Cloud IAP TCP tunneling. If you need direct public SSH for a limited set of source IPs, set `zebra_public_ssh_source_ranges` in `terraform.tfvars`.
 
@@ -99,7 +99,7 @@ The intended workflow for Zebra development and PR testing is:
 1. Run `zebrad-archivenode` against the repo and ref you want to treat as the baseline node.
 2. Wait for it to sync and produce a fresh state-disk snapshot.
 3. Launch `zebra-testing` using that snapshot as its initial state disk, or leave the snapshot unset if you want it to start with an empty state disk.
-4. Point `zebra-testing` at a branch, tag, commit, or PR ref you want to validate.
+4. Point `zebra-testing` at a branch, tag, commit, or PR ref you want to validate (source mode), or at a published release via `zebra_release_tag` (binary mode).
 
 For GitHub pull requests, use `zebra_git_fetch_ref` with a ref like `refs/pull/10513/head`. That allows the instance startup script to fetch the PR ref directly and then check out the fetched commit before building Zebra from source.
 
@@ -120,7 +120,7 @@ zebrad_archivenode_deployments = {
     data_disk_name  = "zebra-data"
     data_disk_size  = 350
     hostname_prefix = "zebra-archivenode"
-    # zebra_repo_ref omitted -> latest tagged release
+    # zebra_release_tag omitted -> latest published release binary
   }
 }
 
@@ -215,8 +215,8 @@ A decription of each of the different types of infrastructure available follows:
 * zcashd-archivenode: a [Zcashd](https://github.com/zcash/zcash) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zcashd-archivenode also stops zcashd at regularly scheduled intervals in order to backup the chaindata (26GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.
 * zcashd-fullnode: a Zcashd full node which connects via Tor to other publicly reachable Zcashd nodes.  Note that inbound connections from other Tor nodes to a hidden service address is not presently enabled due to lack of support for v3 onion addresses. Fullnodes ordinarily *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.  The zcashd-fullnode accepts incoming connections on tcp/8233, but *only from the private VPC network*.
 * zcashd-privatenode: a Zcashd full node which connects via the non-routable private VPC network to the zcashd-fullnode, and is not directly exposed to the Internet.  privatenodes ordinarly *do not need to sync the blockchain via the p2p network*, because their blockchain data volume is created from a snapshot of the zcashd-archivenode.
-* zebrad-archivenode: a source-built [Zebrad](https://github.com/ZcashFoundation/zebra) full node which clones a configurable Zebra git repo/ref, configures Zebra primarily via `ZEBRA_*` environment variables, stores chain state on a persistent disk, and snapshots that disk on a systemd timer.
-* zebra-testing: a source-built Zebra test node intended for branch and PR validation. It restores its state disk from a snapshot, but does not create recurring snapshots of its own.
+* zebrad-archivenode: a [Zebrad](https://github.com/ZcashFoundation/zebra) full node which installs the official checksum-verified release binary from GitHub releases (pinned via `zebra_release_tag`, defaulting to the latest release), configures Zebra primarily via `ZEBRA_*` environment variables, stores chain state on a persistent disk, and snapshots that disk on a systemd timer.
+* zebra-testing: a Zebra test node intended for branch and PR validation. It installs the official release binary by default, or builds Zebra from a configurable git repo/ref when one is set. It restores its state disk from a snapshot, but does not create recurring snapshots of its own.
 * z3: a Docker-based [Z3](https://github.com/zcashfoundation/z3) host that installs Docker Engine, clones the z3 repo, installs `rage`, mounts a dedicated persistent disk for Zebra chain data, pulls the pinned container images, and starts Zebra first so it can complete its initial sync before the rest of the stack is brought up. If a matching archivenode-produced snapshot exists for its network, the Zebra data disk is restored from it. A Rust toolchain for the `z3` app user (only needed for the opt-in source-build overlay) can be enabled globally via `z3_install_rust_toolchain` or per-deployment via `install_rust_toolchain`.
 
 

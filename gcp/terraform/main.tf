@@ -80,7 +80,7 @@ resource "google_compute_firewall" "sshd" {
   }
 }
 
-# Only allow SSH to Zebra source-build hosts through IAP TCP forwarding by default.
+# Only allow SSH to Zebra hosts through IAP TCP forwarding by default.
 resource "google_compute_firewall" "sshd_zebra_iap" {
   name       = "sshd-zebra-iap-firewall"
   network    = google_compute_network.zcash_network.self_link
@@ -286,9 +286,7 @@ module "zebrad-archivenode" {
   hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
-  zebra_repo_url              = "https://github.com/ZcashFoundation/zebra"
-  zebra_repo_ref              = each.value.zebra_repo_ref
-  zebra_git_fetch_ref         = each.value.zebra_git_fetch_ref
+  zebra_release_tag           = each.value.zebra_release_tag
   zebra_network               = each.value.network
   zebra_listen_addr           = format("0.0.0.0:%d", lookup(local.zebra_p2p_ports, each.value.network, var.zebra_p2p_port))
   zebra_state_mount_path      = var.zebra_state_mount_path
@@ -324,6 +322,7 @@ module "zebra-testing" {
   hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
+  zebra_release_tag           = each.value.zebra_release_tag
   zebra_repo_url              = each.value.zebra_repo_url
   zebra_repo_ref              = each.value.zebra_repo_ref
   zebra_git_fetch_ref         = each.value.zebra_git_fetch_ref

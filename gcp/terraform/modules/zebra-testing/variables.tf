@@ -61,7 +61,7 @@ variable "instance_type" {
 
 variable "boot_disk_size" {
   type        = number
-  description = "Size (in GB) of the boot disk used for source checkout and build artifacts"
+  description = "Size (in GB) of the boot disk, used for source checkout and build artifacts in source mode"
 }
 
 variable "subnetwork" {
@@ -80,19 +80,26 @@ variable "hostname_prefix" {
 }
 
 variable "zebra_repo_url" {
-  description = "The Zebra repository to clone on provisioned testing nodes"
+  description = "The Zebra repository to clone on provisioned testing nodes. Only used in source mode."
   type        = string
 }
 
 variable "zebra_repo_ref" {
-  description = "The branch, tag, or commit to check out in the Zebra repository"
+  description = "Branch, tag, or commit to build from source. Empty (default) installs the release binary selected by zebra_release_tag instead."
   type        = string
+  default     = ""
 }
 
 variable "zebra_git_fetch_ref" {
-  description = "Optional explicit git ref to fetch before checkout, for example refs/pull/123/head"
+  description = "Optional explicit git ref to fetch before checkout, for example refs/pull/123/head. Setting this selects source mode."
   type        = string
   default     = ""
+}
+
+variable "zebra_release_tag" {
+  description = "Zebra GitHub release tag to install (e.g. \"v6.2.2\"). The sentinel \"latest\" resolves at boot via the GitHub releases API. Ignored when zebra_repo_ref or zebra_git_fetch_ref selects a source build."
+  type        = string
+  default     = "latest"
 }
 
 variable "zebra_network" {

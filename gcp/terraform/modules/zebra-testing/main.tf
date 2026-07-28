@@ -54,27 +54,37 @@ resource "google_compute_instance" "zebra_testing" {
     }
   }
 
-  metadata_startup_script = templatefile(
-    format("%s/startup.sh", path.module),
-    {
-      data_disk_name         = google_compute_disk.zebra_state[count.index].name,
-      enable_snapshot_timer  = var.enable_snapshot_timer,
-      gcloud_project         = var.project,
-      gcloud_zone            = var.zone,
-      health_listen_addr     = var.health_listen_addr,
-      hostname               = format("%s-%d", var.hostname_prefix, count.index),
-      metrics_endpoint_addr  = var.metrics_endpoint_addr,
-      module_role            = "zebra-testing",
-      snapshot_on_calendar   = var.snapshot_on_calendar,
-      zebra_listen_addr      = var.zebra_listen_addr,
-      zebra_listen_port      = element(split(":", var.zebra_listen_addr), length(split(":", var.zebra_listen_addr)) - 1),
-      zebra_network          = var.zebra_network,
-      zebra_repo_ref         = var.zebra_repo_ref,
-      zebra_repo_url         = var.zebra_repo_url,
-      zebra_git_fetch_ref    = var.zebra_git_fetch_ref,
-      zebra_state_mount_path = var.zebra_state_mount_path,
+  metadata = {
+    startup-script = templatefile(
+      format("%s/startup.sh", path.module),
+      {
+        data_disk_name         = google_compute_disk.zebra_state[count.index].name,
+        enable_snapshot_timer  = var.enable_snapshot_timer,
+        gcloud_project         = var.project,
+        gcloud_zone            = var.zone,
+        health_listen_addr     = var.health_listen_addr,
+        hostname               = format("%s-%d", var.hostname_prefix, count.index),
+        metrics_endpoint_addr  = var.metrics_endpoint_addr,
+        module_role            = "zebra-testing",
+        snapshot_on_calendar   = var.snapshot_on_calendar,
+        zebra_listen_addr      = var.zebra_listen_addr,
+        zebra_listen_port      = element(split(":", var.zebra_listen_addr), length(split(":", var.zebra_listen_addr)) - 1),
+        zebra_network          = var.zebra_network,
+        zebra_release_tag      = var.zebra_release_tag,
+        zebra_repo_ref         = var.zebra_repo_ref,
+        zebra_repo_url         = var.zebra_repo_url,
+        zebra_git_fetch_ref    = var.zebra_git_fetch_ref,
+        zebra_state_mount_path = var.zebra_state_mount_path,
+      }
+    )
+  }
+
+  lifecycle {
+    precondition {
+      condition     = !((var.zebra_repo_ref != "" || var.zebra_git_fetch_ref != "") && var.zebra_release_tag != "latest")
+      error_message = "Set zebra_repo_ref/zebra_git_fetch_ref (source build) or a non-latest zebra_release_tag (binary install), not both."
     }
-  )
+  }
 
   service_account {
     scopes = var.service_account_scopes

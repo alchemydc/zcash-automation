@@ -146,16 +146,15 @@ variable "zebra_archivenode_snapshot_on_calendar" {
 }
 
 variable "zebrad_archivenode_deployments" {
-  description = "Map of zebrad-archivenode deployments keyed by environment (e.g. mainnet, testnet). Each entry produces an independent archive node that snapshots its state daily, with labels purpose=zebra-state and network=<lowercased network> so downstream consumers (z3) can discover the right snapshot by network. data_disk_snapshot is optional: set it for restoring a freshly-created disk, or leave null for first-time bootstrap."
+  description = "Map of zebrad-archivenode deployments keyed by environment (e.g. mainnet, testnet). Each entry produces an independent archive node that snapshots its state daily, with labels purpose=zebra-state and network=<lowercased network> so downstream consumers (z3) can discover the right snapshot by network. data_disk_snapshot is optional: set it for restoring a freshly-created disk, or leave null for first-time bootstrap. zebra_release_tag pins the installed release binary; the default \"latest\" resolves the newest published release at boot."
   type = map(object({
-    network             = string
-    replicas            = number
-    data_disk_name      = string
-    data_disk_size      = number
-    hostname_prefix     = string
-    data_disk_snapshot  = optional(string)
-    zebra_repo_ref      = optional(string, "latest-release")
-    zebra_git_fetch_ref = optional(string, "")
+    network            = string
+    replicas           = number
+    data_disk_name     = string
+    data_disk_size     = number
+    hostname_prefix    = string
+    data_disk_snapshot = optional(string)
+    zebra_release_tag  = optional(string, "latest")
   }))
   default = {
     mainnet = {
@@ -184,10 +183,13 @@ variable "zebra_testing_instance_type" {
 
 variable "zebra_testing_deployments" {
   description = <<-EOT
-    Map of zebra-testing deployments keyed by a short slug (e.g. "v4.5.3", "pr-10513").
+    Map of zebra-testing deployments keyed by a short slug (e.g. "v6.2.2", "pr-10513").
     Each entry produces an independent zebra-testing deployment. Set replicas > 1 to
     deploy multiple identical copies of one deployment. data_disk_snapshot is optional:
     set it to restore from an existing snapshot, or omit for a fresh empty disk.
+    By default each deployment installs the release binary selected by zebra_release_tag
+    ("latest" resolves the newest published release at boot). Setting zebra_repo_ref or
+    zebra_git_fetch_ref switches that deployment to building from source instead.
   EOT
   type = map(object({
     network             = string
@@ -196,8 +198,9 @@ variable "zebra_testing_deployments" {
     data_disk_size      = number
     hostname_prefix     = string
     data_disk_snapshot  = optional(string)
+    zebra_release_tag   = optional(string, "latest")
     zebra_repo_url      = optional(string, "https://github.com/ZcashFoundation/zebra")
-    zebra_repo_ref      = optional(string, "latest-release")
+    zebra_repo_ref      = optional(string, "")
     zebra_git_fetch_ref = optional(string, "")
   }))
   default = {}

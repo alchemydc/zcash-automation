@@ -10,8 +10,11 @@ export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 APP_USER="zebra"
 APP_DIR="/opt/zebra"
 APP_HOME="/home/$APP_USER"
+ZEBRAD_BIN="/usr/local/bin/zebrad"
 BASE_STATE_DIR="/var/lib/${module_role}"
 BASE_MARKER_PATH="$BASE_STATE_DIR/base-provisioned"
+RELEASE_MARKER_PATH="$BASE_STATE_DIR/zebrad-release"
+TOOLCHAIN_MARKER_PATH="$BASE_STATE_DIR/build-toolchain-provisioned"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 STATE_MOUNT_PATH="${zebra_state_mount_path}"
 
@@ -29,18 +32,11 @@ install_base_packages() {
     log "Installing base packages"
     apt-get update
     apt-get install -y \
-        build-essential \
         ca-certificates \
-        clang \
         curl \
-        git \
         htop \
         jq \
-        libclang-dev \
-        libssl-dev \
-        llvm \
         nftables \
-        pkg-config \
         tmux
 }
 
@@ -118,10 +114,24 @@ install_global_bash_aliases() {
     printf '\n# Added by %s startup\n%s\n' "${module_role}" "$alias_line" >> /etc/bash.bashrc
 }
 
-install_rust_toolchain() {
+ensure_build_toolchain() {
     local app_home
 
-    log "Installing Rust toolchain for $APP_USER"
+    if [ -f "$TOOLCHAIN_MARKER_PATH" ]; then
+        return
+    fi
+
+    log "Installing build packages and Rust toolchain for $APP_USER"
+
+    apt-get update
+    apt-get install -y \
+        build-essential \
+        clang \
+        git \
+        libclang-dev \
+        libssl-dev \
+        llvm \
+        pkg-config
 
     app_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
 
@@ -140,6 +150,9 @@ install_rust_toolchain() {
         printf '\n# Added by %s startup\n. "$HOME/.cargo/env"\n' "${module_role}" >> "$app_home/.bashrc"
         chown "$APP_USER:$APP_USER" "$app_home/.bashrc"
     fi
+
+    mkdir -p "$BASE_STATE_DIR"
+    touch "$TOOLCHAIN_MARKER_PATH"
 }
 
 ensure_data_disk() {
@@ -227,10 +240,10 @@ RequiresMountsFor=${zebra_state_mount_path}
 User=$APP_USER
 Group=$APP_USER
 Environment=HOME=$APP_HOME
-Environment=PATH=$APP_HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=-/etc/default/zebrad
-WorkingDirectory=$APP_DIR
-ExecStart=$APP_DIR/target/release/zebrad start
+WorkingDirectory=$APP_HOME
+ExecStart=$ZEBRAD_BIN start
 Restart=on-failure
 RestartSec=30
 LimitNOFILE=1048576
@@ -363,12 +376,64 @@ checkout_repo() {
     current_rev="$(git rev-parse HEAD)"
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
-    if [ ! -x "$APP_DIR/target/release/zebrad" ] || [ "$old_rev" != "$current_rev" ]; then
+    if [ ! -x "$APP_DIR/target/release/zebrad" ] || [ "$old_rev" != "$current_rev" ] || [ "$(cat "$RELEASE_MARKER_PATH" 2>/dev/null)" != "source:$current_rev" ]; then
         log "Zebra source changed or binary missing; rebuilding"
         su - "$APP_USER" -c 'source "$HOME/.cargo/env" && cd /opt/zebra && cargo build --release --locked --bin zebrad --features prometheus'
     else
         log "Zebra source unchanged; skipping rebuild"
     fi
+
+    install -m 0755 -T "$APP_DIR/target/release/zebrad" "$ZEBRAD_BIN"
+    mkdir -p "$BASE_STATE_DIR"
+    echo "source:$current_rev" > "$RELEASE_MARKER_PATH"
+}
+
+install_zebrad_release() {
+    local requested_tag="${zebra_release_tag}"
+    local resolved_tag installed_tag machine version asset base_url tmp_dir
+
+    if [ "$requested_tag" = "latest" ]; then
+        resolved_tag="$(curl -fsSL https://api.github.com/repos/ZcashFoundation/zebra/releases/latest | jq -r '.tag_name' || true)"
+        if [ -z "$resolved_tag" ] || [ "$resolved_tag" = "null" ]; then
+            if [ -x "$ZEBRAD_BIN" ]; then
+                log "Could not resolve latest Zebra release; keeping installed $(cat "$RELEASE_MARKER_PATH" 2>/dev/null || echo unknown)"
+                return 0
+            fi
+            log "Could not resolve latest Zebra release and no zebrad installed"
+            exit 1
+        fi
+    else
+        resolved_tag="$requested_tag"
+    fi
+
+    installed_tag="$(cat "$RELEASE_MARKER_PATH" 2>/dev/null || true)"
+    if [ "$installed_tag" = "$resolved_tag" ] && [ -x "$ZEBRAD_BIN" ]; then
+        log "zebrad $resolved_tag already installed; skipping download"
+        return 0
+    fi
+
+    machine="$(uname -m)"
+    case "$machine" in
+        x86_64|aarch64) ;;
+        *) log "Unsupported architecture $machine"; exit 1 ;;
+    esac
+
+    version="$${resolved_tag#v}"
+    asset="zebrad-$version-$machine-unknown-linux-gnu.tar.gz"
+    base_url="https://github.com/ZcashFoundation/zebra/releases/download/$resolved_tag"
+
+    log "Installing zebrad $resolved_tag ($asset)"
+    tmp_dir="$(mktemp -d)"
+    curl -fsSL -o "$tmp_dir/$asset" "$base_url/$asset"
+    curl -fsSL -o "$tmp_dir/$asset.sha256" "$base_url/$asset.sha256"
+    (cd "$tmp_dir" && sha256sum -c "$asset.sha256")
+    tar -xzf "$tmp_dir/$asset" -C "$tmp_dir" zebrad
+    install -m 0755 -T "$tmp_dir/zebrad" "$ZEBRAD_BIN"
+    rm -rf "$tmp_dir"
+
+    log "Installed: $("$ZEBRAD_BIN" --version)"
+    mkdir -p "$BASE_STATE_DIR"
+    echo "$resolved_tag" > "$RELEASE_MARKER_PATH"
 }
 
 ensure_base_provisioning() {
@@ -383,7 +448,6 @@ ensure_base_provisioning() {
     install_ops_agent
     install_tmux_config
     install_global_bash_aliases
-    install_rust_toolchain
     touch "$BASE_MARKER_PATH"
 }
 
@@ -395,7 +459,14 @@ main() {
     write_zebra_env_file
     write_zebrad_service
     write_snapshot_units
-    checkout_repo
+
+    if [ -n "${zebra_repo_ref}" ] || [ -n "${zebra_git_fetch_ref}" ]; then
+        ensure_build_toolchain
+        checkout_repo
+    else
+        install_zebrad_release
+    fi
+
     systemctl restart zebrad.service
     log "${module_role} initialization complete"
 }

@@ -61,7 +61,7 @@ variable "instance_type" {
 
 variable "boot_disk_size" {
   type        = number
-  description = "Size (in GB) of the boot disk used for source checkout and build artifacts"
+  description = "Size (in GB) of the boot disk"
 }
 
 variable "subnetwork" {
@@ -79,21 +79,10 @@ variable "hostname_prefix" {
   description = "Prefix used for GCP resource names (instances, disks, addresses)"
 }
 
-variable "zebra_repo_url" {
-  description = "The Zebra repository to clone on provisioned archive nodes"
+variable "zebra_release_tag" {
+  description = "Zebra GitHub release tag to install (e.g. \"v6.2.2\"). The sentinel \"latest\" resolves at boot via the GitHub releases API."
   type        = string
-}
-
-variable "zebra_repo_ref" {
-  description = "The branch, tag, or commit to check out in the Zebra repository. The sentinel \"latest-release\" resolves at startup to the most recent v* tag on the remote."
-  type        = string
-  default     = "latest-release"
-}
-
-variable "zebra_git_fetch_ref" {
-  description = "Optional explicit git ref to fetch before checkout, for example refs/pull/123/head"
-  type        = string
-  default     = ""
+  default     = "latest"
 }
 
 variable "zebra_network" {
