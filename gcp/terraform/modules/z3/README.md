@@ -37,6 +37,20 @@ convenience wrapper:
 sudo /usr/local/bin/z3-start-full-stack
 ```
 
+## Zebra RPC Helpers
+
+Shell helpers for Zebra's JSON-RPC endpoint (`zebra-sync`, `zebra-peers`,
+`zebra-block`, the generic `zebra-rpc <method>`, and more) are installed to
+`/etc/profile.d/zebra-rpc.sh` and available in any interactive shell (login
+and non-login, via an `/etc/bash.bashrc` hook); run
+`zebra-rpc-help` for the full list. They target the host-published RPC port
+for the deployment's network (mainnet 8232, testnet 18232, regtest 29232).
+On mainnet/testnet, Zebra cookie auth is enabled and the cookie lives in a
+root-readable docker volume, so the helpers fall back to `sudo cat` when the
+invoking user cannot read it directly. On already-provisioned hosts the
+helpers appear after the next reboot or a manual
+`sudo google_metadata_script_runner startup`.
+
 ## SSH and VS Code Remote Access
 
 This module is configured for direct SSH login as the shared `z3` app user so operators can use VS Code Remote-SSH without sudo user switching.

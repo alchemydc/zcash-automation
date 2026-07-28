@@ -68,6 +68,7 @@ resource "google_compute_instance" "archivenode" {
         module_role            = "zebrad-archivenode",
         rpc_listen_addr        = var.rpc_listen_addr,
         snapshot_on_calendar   = var.snapshot_on_calendar,
+        zebra_external_ip      = google_compute_address.zebrad_archivenode[count.index].address,
         zebra_listen_addr      = var.zebra_listen_addr,
         zebra_listen_port      = element(split(":", var.zebra_listen_addr), length(split(":", var.zebra_listen_addr)) - 1),
         zebra_network          = var.zebra_network,

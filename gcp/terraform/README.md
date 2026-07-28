@@ -252,6 +252,14 @@ This project is not designed to automate the management of Zcashd wallets.  If y
   * A: No!  Please do not use this project for critical production workloads and/or mainnet funds without thoroughly understanding how it works and understanding the security tradeoffs.
  
 
+## Zebra Cheatsheet
+Every Zebra host (zebrad-archivenode, zebra-testing, z3) installs curl+jq helper functions for the node's localhost JSON-RPC endpoint via `/etc/profile.d/zebra-rpc.sh`; run `zebra-rpc-help` on the instance for the full list.
+* Is my node synced? `gcloud compute ssh "zebra-archivenode-0" --command "bash -lc zebra-sync"`
+* How many peers am I connected to? `gcloud compute ssh "zebra-archivenode-0" --command "bash -lc zebra-peers" | jq '.count'`
+* Blockchain info: `gcloud compute ssh "zebra-archivenode-0" --command "bash -lc zebra-chain"`
+* Fetch a block: `gcloud compute ssh "zebra-archivenode-0" --command "bash -lc 'zebra-block 1234567'"`
+* Any RPC method: `gcloud compute ssh "zebra-archivenode-0" --command "bash -lc 'zebra-rpc getdifficulty'"`
+
 ## Zcashd Cheatsheet
 * Is my node alive? `gcloud compute ssh "zcash-fullnode" --command "sudo -u zcash zcash-cli getinfo" | jq .`
 * How many peers am I connected to? `gcloud compute ssh "zcash-fullnode" --command "sudo -u zcash zcash-cli getnetworkinfo" | jq '.connections'`

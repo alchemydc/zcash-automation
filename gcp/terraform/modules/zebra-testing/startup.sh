@@ -208,6 +208,7 @@ write_zebra_env_file() {
     cat <<EOF > /etc/default/zebrad
 ZEBRA_NETWORK__NETWORK=${zebra_network}
 ZEBRA_NETWORK__LISTEN_ADDR=${zebra_listen_addr}
+ZEBRA_NETWORK__EXTERNAL_ADDR=${zebra_external_ip}:${zebra_listen_port}
 ZEBRA_STATE__CACHE_DIR=${zebra_state_mount_path}
 ZEBRA_STATE__EPHEMERAL=false
 ZEBRA_TRACING__USE_JOURNALD=true
@@ -221,6 +222,11 @@ EOF
 
     if [ -n "${health_listen_addr}" ]; then
         echo "ZEBRA_HEALTH__LISTEN_ADDR=${health_listen_addr}" >> /etc/default/zebrad
+    fi
+
+    if [ -n "${rpc_listen_addr}" ]; then
+        echo "ZEBRA_RPC__LISTEN_ADDR=${rpc_listen_addr}" >> /etc/default/zebrad
+        echo "ZEBRA_RPC__ENABLE_COOKIE_AUTH=false" >> /etc/default/zebrad
     fi
 
     chmod 0644 /etc/default/zebrad
@@ -345,6 +351,230 @@ EOF
     systemctl restart zebra-snapshot.timer
 }
 
+install_zebra_rpc_helpers() {
+    log "Installing Zebra RPC helper functions"
+
+    cat <<'EOF' > /etc/profile.d/zebra-rpc.sh
+# Zebra JSON-RPC troubleshooting helpers (installed by ${module_role} startup).
+# Run zebra-rpc-help for the list of commands.
+
+# Bash-only functions below; bail out quietly for other shells sourcing
+# /etc/profile.d (e.g. dash).
+[ -n "$${BASH_VERSION:-}" ] || return 0
+
+_zebra_rpc_url() {
+    local addr
+    addr="$(sed -n 's/^ZEBRA_RPC__LISTEN_ADDR=//p' /etc/default/zebrad 2>/dev/null | tail -n 1)"
+    if [ -z "$addr" ]; then
+        echo "zebra-rpc: RPC is not enabled on this node (no ZEBRA_RPC__LISTEN_ADDR in /etc/default/zebrad)" >&2
+        return 1
+    fi
+    echo "http://$addr/"
+}
+
+# Cookie auth is disabled on this node (ZEBRA_RPC__ENABLE_COOKIE_AUTH=false).
+_zebra_rpc_cookie() { :; }
+
+_zebra_rpc_call() {
+    local method="$1" params="$${2:-[]}"
+    local url cookie body response
+
+    url="$(_zebra_rpc_url)" || return 1
+    cookie="$(_zebra_rpc_cookie)" || return 1
+
+    body="$(jq -cn --arg m "$method" --argjson p "$params" \
+        '{jsonrpc: "2.0", id: "zebra-rpc", method: $m, params: $p}')" || return 1
+
+    if [ -n "$${ZEBRA_RPC_VERBOSE:-}" ]; then
+        echo "zebra-rpc: calling $method params=$params -> $url" >&2
+    fi
+
+    local -a curl_auth=()
+    if [ -n "$cookie" ]; then
+        curl_auth=(-u "$cookie")
+    fi
+
+    if ! response="$(curl -sS --max-time 30 -H 'Content-Type: application/json' \
+        --data-binary "$body" "$${curl_auth[@]}" "$url")"; then
+        echo "zebra-rpc: request to $url failed" >&2
+        return 1
+    fi
+
+    if [ -z "$response" ]; then
+        echo "zebra-rpc: empty response from $url (node down, RPC disabled, or bad cookie)" >&2
+        return 1
+    fi
+
+    if ! printf '%s' "$response" | jq . >/dev/null 2>&1; then
+        echo "zebra-rpc: non-JSON response from $url: $response" >&2
+        return 1
+    fi
+
+    if [ "$(printf '%s' "$response" | jq -r '.error != null')" = "true" ]; then
+        printf '%s' "$response" | jq -r '"zebra-rpc: error \(.error.code): \(.error.message)"' >&2
+        return 1
+    fi
+
+    printf '%s\n' "$response" | jq '.result'
+}
+
+zebra-rpc() {
+    if [ $# -lt 1 ]; then
+        echo "usage: zebra-rpc <method> [param ...]   (params parsed as JSON when valid, else as strings)" >&2
+        return 1
+    fi
+
+    local method="$1" params="[]" arg
+    shift
+
+    for arg in "$@"; do
+        if [ -n "$arg" ] && printf '%s' "$arg" | jq . >/dev/null 2>&1; then
+            params="$(jq -cn --argjson cur "$params" --argjson v "$arg" '$cur + [$v]')"
+        else
+            params="$(jq -cn --argjson cur "$params" --arg v "$arg" '$cur + [$v]')"
+        fi
+    done
+
+    _zebra_rpc_call "$method" "$params"
+}
+
+zebra-info() {
+    _zebra_rpc_call getinfo | jq '{version, build, subversion, blocks, connections, errors}'
+}
+
+zebra-sync() {
+    _zebra_rpc_call getblockchaininfo | jq '{chain, blocks, estimatedheight, behind: (.estimatedheight - .blocks), verificationprogress, synced: (.blocks >= .estimatedheight), bestblockhash}'
+}
+
+zebra-chain() {
+    _zebra_rpc_call getblockchaininfo
+}
+
+zebra-tip() {
+    _zebra_rpc_call getbestblockheightandhash
+}
+
+zebra-height() {
+    _zebra_rpc_call getblockcount
+}
+
+zebra-peers() {
+    _zebra_rpc_call getpeerinfo | jq '{count: length, peers: map({addr, inbound, subver, connection_state, pingtime})}'
+}
+
+zebra-net() {
+    _zebra_rpc_call getnetworkinfo
+}
+
+zebra-mempool() {
+    _zebra_rpc_call getmempoolinfo
+}
+
+zebra-mempool-txs() {
+    _zebra_rpc_call getrawmempool "[$${1:-true}]"
+}
+
+zebra-block() {
+    if [ $# -lt 1 ]; then
+        echo "usage: zebra-block <height|hash> [verbosity 0-2, default 1]" >&2
+        return 1
+    fi
+    _zebra_rpc_call getblock "$(jq -cn --arg b "$1" --argjson v "$${2:-1}" '[$b, $v]')"
+}
+
+zebra-blockhash() {
+    if [ $# -ne 1 ]; then
+        echo "usage: zebra-blockhash <height>" >&2
+        return 1
+    fi
+    _zebra_rpc_call getblockhash "[$1]"
+}
+
+zebra-header() {
+    if [ $# -lt 1 ]; then
+        echo "usage: zebra-header <height|hash>" >&2
+        return 1
+    fi
+    _zebra_rpc_call getblockheader "$(jq -cn --arg b "$1" '[$b, true]')"
+}
+
+zebra-tx() {
+    if [ $# -lt 1 ]; then
+        echo "usage: zebra-tx <txid> [verbose 0|1, default 1]" >&2
+        return 1
+    fi
+    _zebra_rpc_call getrawtransaction "$(jq -cn --arg t "$1" --argjson v "$${2:-1}" '[$t, $v]')"
+}
+
+zebra-mining() {
+    _zebra_rpc_call getmininginfo
+}
+
+zebra-solps() {
+    _zebra_rpc_call getnetworksolps "[$${1:-120}]"
+}
+
+zebra-validate() {
+    if [ $# -ne 1 ]; then
+        echo "usage: zebra-validate <address>" >&2
+        return 1
+    fi
+    local params result
+    params="$(jq -cn --arg a "$1" '[$a]')"
+    result="$(_zebra_rpc_call validateaddress "$params")" || return 1
+    if [ "$(printf '%s' "$result" | jq '.isvalid')" = "true" ]; then
+        printf '%s\n' "$result"
+    else
+        _zebra_rpc_call z_validateaddress "$params"
+    fi
+}
+
+zebra-methods() {
+    _zebra_rpc_call rpc.discover | jq -r '.methods[].name' | sort
+}
+
+zebra-rpc-help() {
+    cat <<'HELP'
+Zebra JSON-RPC helpers (curl + jq against the local zebrad RPC endpoint)
+
+  zebra-info                      node version, height, connections, errors (getinfo)
+  zebra-sync                      sync summary: height vs estimate, progress (getblockchaininfo)
+  zebra-chain                     full getblockchaininfo
+  zebra-tip                       best block height and hash (getbestblockheightandhash)
+  zebra-height                    current block count (getblockcount)
+  zebra-peers                     peer summary (getpeerinfo)
+  zebra-net                       network info (getnetworkinfo)
+  zebra-mempool                   mempool summary (getmempoolinfo)
+  zebra-mempool-txs [true|false]  mempool contents, verbose by default (getrawmempool)
+  zebra-block <height|hash> [v]   fetch a block, verbosity 0-2, default 1 (getblock)
+  zebra-blockhash <height>        block hash at height (getblockhash)
+  zebra-header <height|hash>      block header (getblockheader)
+  zebra-tx <txid> [0|1]           raw transaction, verbose by default (getrawtransaction)
+  zebra-mining                    mining info incl. network sol/s (getmininginfo)
+  zebra-solps [num_blocks]        network solutions per second (getnetworksolps)
+  zebra-validate <address>        validate a transparent or shielded address
+  zebra-methods                   list every RPC method the node supports (rpc.discover)
+  zebra-rpc <method> [param ...]  call any RPC method directly
+
+Notes:
+  - getblock and getblockheader take heights as JSON strings; the wrappers
+    handle this. With the generic zebra-rpc, quote heights yourself, e.g.:
+      zebra-rpc getblock '"1234567"' 1
+  - Set ZEBRA_RPC_VERBOSE=1 to print each RPC call (method, params, URL) to
+    stderr, e.g.: ZEBRA_RPC_VERBOSE=1 zebra-sync
+    (or 'export ZEBRA_RPC_VERBOSE=1' for the whole session)
+HELP
+}
+EOF
+    chmod 0644 /etc/profile.d/zebra-rpc.sh
+
+    # /etc/profile.d is only sourced by login shells; hook /etc/bash.bashrc so
+    # the helpers also load in non-login interactive shells (tmux, VS Code).
+    if ! grep -Fq '/etc/profile.d/zebra-rpc.sh' /etc/bash.bashrc; then
+        printf '\n# Added by %s startup\n[ -f /etc/profile.d/zebra-rpc.sh ] && . /etc/profile.d/zebra-rpc.sh\n' "${module_role}" >> /etc/bash.bashrc
+    fi
+}
+
 checkout_repo() {
     local current_rev
     local old_rev=""
@@ -459,6 +689,7 @@ main() {
     write_zebra_env_file
     write_zebrad_service
     write_snapshot_units
+    install_zebra_rpc_helpers
 
     if [ -n "${zebra_repo_ref}" ] || [ -n "${zebra_git_fetch_ref}" ]; then
         ensure_build_toolchain

@@ -129,6 +129,12 @@ variable "health_listen_addr" {
   default     = "0.0.0.0:8080"
 }
 
+variable "rpc_listen_addr" {
+  description = "Zebra JSON-RPC listen address. Defaults to localhost-only. Set to \"\" to disable."
+  type        = string
+  default     = "127.0.0.1:8232"
+}
+
 variable "enable_snapshot_timer" {
   description = "Whether to install and enable a recurring snapshot timer for the Zebra state disk"
   type        = bool
