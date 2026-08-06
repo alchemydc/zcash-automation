@@ -57,8 +57,9 @@ source gcloud.env
 
 ```hcl
 vote_validator_enabled                  = true
-vote_validator_key_backup_age_recipient = "age1..."   # from step 1
-# vote_validator_tls_domain             = "svote.example.org"  # optional; see below
+vote_validator_moniker                  = "ZF"                 # public validator name
+vote_validator_tls_domain               = "zvote.zfnd.org"     # see TLS below
+vote_validator_key_backup_age_recipient = "age1..."            # from step 1
 # vote_validator_join_script_sha256     = "..."                # optional; see below
 ```
 
@@ -74,11 +75,36 @@ gcloud compute ssh zcash-vote-validator-0 --tunnel-through-iap \
   --zone "$TF_VAR_zone" -- -t 'sudo -iu svote svote join'
 ```
 
-It asks for a validator name, installs `svoted`, syncs from a published
-snapshot, registers with the join queue, offers to back up the signing key
-(say yes), and prints the message to send to the Valar Group admin. Once they
-approve and fund the operator address, the upstream wrapper bonds the validator
-by itself.
+It asks nothing — the moniker and TLS domain are both preset — then installs
+`svoted`, syncs from a published snapshot, registers with the join queue, offers
+to back up the signing key (say yes), and prints the message to send to the Valar
+Group admin. Once they approve and fund the operator address, the upstream
+wrapper bonds the validator by itself.
+
+`vote_validator_moniker` is required and is deliberately *not* prompted for. It is
+the validator's public name: it goes into the registration payload and, when the
+wrapper bonds, the on-chain staking record. Upstream prompts for it immediately
+after reporting the preset TLS domain, which makes answering with the hostname an
+easy and expensive mistake.
+
+## Cosmovisor and already-applied upgrades
+
+Joining from a published snapshot restores `data/upgrade-info.json` describing an
+upgrade the chain has long since applied — currently `v1` at height 802461,
+requiring binary tag `v1.0.0`. Cosmovisor reads that on start, decides it must run
+`cosmovisor/upgrades/v1/bin/svoted`, finds only `genesis/bin/svoted`, and exits 1
+because `DAEMON_ALLOW_DOWNLOAD_BINARIES=false`. Every new validator hits this.
+
+`svote-stage-upgrades` runs as `ExecStartPre` and stages the installed binary for
+that upgrade — but only when it is safe to: the plan records its required tag in
+`.info`, and the binary is substituted only if the installed version has the same
+major and minor and a patch no older. A different minor or major is a consensus
+change, so it refuses and tells you to run
+`svote prestage-upgrade <plan-name> <tag>` with the real binary. Blindly
+substituting there would diverge the app hash.
+
+The helper is advisory and always exits 0, so it can never itself be the reason
+the daemon fails to start.
 
 ## Operator CLI
 
@@ -98,7 +124,7 @@ as the `svote` user when needed.
 | `svote tls-status` | Configured domain, DNS match, certificate issuer/expiry, public reachability |
 | `svote snapshot-now` | Snapshot the data disk now |
 | `svote reset-snapshot` | Re-sync chain state from a published snapshot (backs keys up first) |
-| `svote prestage-upgrade TAG` | Stage a coordinated upgrade binary |
+| `svote prestage-upgrade PLAN [TAG]` | Stage a coordinated upgrade binary. Plan name and tag are separate because they differ in practice — the live chain's plan `v1` wants tag `v1.0.0` |
 | `svote remove` | Tear the validator down (backs keys up first) |
 
 Every interactive login prints the validator's state, and nags until the signing

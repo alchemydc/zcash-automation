@@ -200,6 +200,37 @@ variable "join_script_sha256" {
   }
 }
 
+variable "moniker" {
+  description = <<-EOT
+    The validator's public name. It goes into the registration payload, the join
+    queue, and the on-chain staking record when the wrapper bonds, so it is this
+    deployment's public identity — a name, not a hostname.
+
+    Declared here rather than left to the installer's interactive prompt: the
+    prompt appears immediately after `svote join` reports the preset TLS domain,
+    which makes answering it with the hostname an easy and expensive mistake.
+    `svote join` refuses to run while this is empty.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.moniker == "" || !can(regex("\\.", var.moniker))
+    error_message = "moniker looks like a hostname. Use a validator name (e.g. \"ZF\"), not a DNS name."
+  }
+}
+
+variable "join_timeout_seconds" {
+  description = <<-EOT
+    Cap on how long the upstream installer may run. It ends with an unbounded
+    "wait for sync" loop, so a node that cannot start leaves it spinning forever;
+    on timeout `svote join` carries on to its post-join steps, which is what
+    surfaces the registration details and the key backup prompt.
+  EOT
+  type        = number
+  default     = 3600
+}
+
 variable "svote_admin_url" {
   description = <<-EOT
     Base URL of Valar Group's admin API, which `svote register` POSTs the signed

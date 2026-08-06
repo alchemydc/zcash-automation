@@ -356,6 +356,22 @@ variable "vote_validator_join_script_sha256" {
   default     = ""
 }
 
+variable "vote_validator_moniker" {
+  description = <<-EOT
+    The validator's public name, e.g. "ZF". Goes into the registration payload and
+    the on-chain staking record, so it is a name, not a hostname. `svote join`
+    refuses to run while this is empty rather than prompting for it.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "vote_validator_join_timeout_seconds" {
+  description = "Cap on how long Valar Group's installer may run before svote join moves on to its post-join steps"
+  type        = number
+  default     = 3600
+}
+
 variable "vote_validator_svote_admin_url" {
   description = <<-EOT
     Base URL of Valar Group's admin API used by `svote register`. Empty derives it

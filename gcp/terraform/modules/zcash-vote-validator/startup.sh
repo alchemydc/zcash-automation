@@ -245,6 +245,8 @@ SVOTE_P2P_PORT="${p2p_port}"
 SVOTE_JOIN_SCRIPT_URL="${join_script_url}"
 SVOTE_JOIN_SCRIPT_SHA256="${join_script_sha256}"
 SVOTE_ADMIN_URL="${svote_admin_url}"
+SVOTE_MONIKER="${moniker}"
+SVOTE_JOIN_TIMEOUT="${join_timeout_seconds}"
 SVOTE_KEY_BACKUP_BUCKET="${key_backup_bucket}"
 SVOTE_KEY_BACKUP_AGE_RECIPIENT="${key_backup_age_recipient}"
 SVOTE_KEY_BACKUP_MARKER="$SVOTE_MOUNT_PATH/.key-backup-configured"
@@ -257,6 +259,88 @@ SVOTE_HOSTNAME="${hostname}"
 EOF
 
   chmod 0644 /etc/default/svote
+}
+
+install_upgrade_staging() {
+  # Joining from a published snapshot restores data/upgrade-info.json describing
+  # an already-applied upgrade. Cosmovisor reads that on start, decides it must
+  # run cosmovisor/upgrades/<name>/bin/svoted, finds only genesis/bin/svoted, and
+  # exits 1 because we keep DAEMON_ALLOW_DOWNLOAD_BINARIES=false. Every new
+  # validator hits this, so stage the binary before svoted starts.
+  #
+  # Blindly staging the installed binary would be wrong for a *future* upgrade --
+  # running an old binary past an upgrade height diverges the app hash. So this
+  # only acts when the required tag recorded in upgrade-info.json is satisfied by
+  # what is installed, and otherwise says what to do instead.
+  log "Installing cosmovisor upgrade staging helper"
+
+  cat <<'EOF' > /usr/local/bin/svote-stage-upgrades
+#!/bin/bash
+# Stage the installed svoted as the binary for an already-applied upgrade.
+# Runs from svoted.service's ExecStartPre. Advisory: always exits 0, so it can
+# never be the reason the daemon fails to start.
+set -uo pipefail
+
+# shellcheck disable=SC1091
+. /etc/default/svote
+
+log() {
+  echo "svote-stage-upgrades: $*"
+}
+
+info_file="$SVOTE_HOME/data/upgrade-info.json"
+genesis_bin="$SVOTE_HOME/cosmovisor/genesis/bin/svoted"
+
+[ -f "$info_file" ] || exit 0
+[ -x "$genesis_bin" ] || exit 0
+
+name="$(jq -r '.name // empty' "$info_file" 2>/dev/null || true)"
+[ -n "$name" ] || exit 0
+
+target="$SVOTE_HOME/cosmovisor/upgrades/$name/bin/svoted"
+if [ -x "$target" ]; then
+  exit 0
+fi
+
+height="$(jq -r '.height // empty' "$info_file" 2>/dev/null || true)"
+# The upgrade plan records the binary tag it expects inside .info, itself a JSON
+# string. fromjson? yields empty rather than failing on anything unparseable.
+required="$(jq -r '(.info // "") | (fromjson? // {}) | .tag // empty' "$info_file" 2>/dev/null || true)"
+installed="$("$genesis_bin" version 2>/dev/null | tr -d '[:space:]' || true)"
+
+# Satisfied when major and minor match and the installed patch is not older.
+# Cosmos patch releases within a minor are state-machine compatible; a different
+# major or minor is a consensus change and must not be substituted.
+satisfies() {
+  local inst="$${1#v}"
+  local req="$${2#v}"
+  local i_ma i_mi i_pa r_ma r_mi r_pa
+
+  [ -n "$req" ] || return 1
+  IFS=. read -r i_ma i_mi i_pa <<<"$inst"
+  IFS=. read -r r_ma r_mi r_pa <<<"$req"
+  [ "$${i_ma:-x}" = "$${r_ma:-y}" ] &&
+    [ "$${i_mi:-x}" = "$${r_mi:-y}" ] &&
+    [ "$${i_pa:-0}" -ge "$${r_pa:-0}" ] 2>/dev/null
+}
+
+if satisfies "$installed" "$required"; then
+  log "staging $installed as the binary for applied upgrade '$name' (height $height, requires $required)"
+  # mkdir -p then install, rather than `install -D`, which is a GNU extension.
+  if mkdir -p "$(dirname "$target")" && install -m 0755 "$genesis_bin" "$target"; then
+    log "staged $target"
+  else
+    log "WARNING: could not stage $target"
+  fi
+  exit 0
+fi
+
+log "WARNING: upgrade '$name' (height $height) needs binary tag $${required:-<unknown>}, but $${installed:-<unknown>} is installed."
+log "         Refusing to substitute it: running the wrong binary past an upgrade height diverges the app hash."
+log "         Stage the correct binary first:  svote prestage-upgrade $name <tag>"
+exit 0
+EOF
+  chmod 0755 /usr/local/bin/svote-stage-upgrades
 }
 
 write_caddyfile() {
@@ -332,6 +416,11 @@ stage_svoted_hardening_dropin() {
 # with 'env: bash: Not a directory' and exit 126, which is opaque. An absolute
 # interpreter removes the lookup entirely. The empty ExecStart= is required to
 # reset the value inherited from the generated unit before setting a new one.
+
+# Stage the binary for an already-applied upgrade before cosmovisor looks for it.
+# Advisory only: the helper always exits 0.
+ExecStartPre=/usr/local/bin/svote-stage-upgrades
+
 ExecStart=
 ExecStart=/usr/bin/bash $INSTALL_DIR/svoted-wrapper.sh
 
@@ -351,6 +440,17 @@ ProtectKernelTunables=true
 RestrictSUIDSGID=true
 LimitNOFILE=65536
 EOF
+
+  # Pin the declared moniker. The generated unit bakes in whatever was typed at
+  # the installer's prompt, and the wrapper passes MONIKER to create-val-tx when
+  # it bonds, so an unpinned typo becomes the on-chain validator name. Appended
+  # conditionally: the wrapper treats an empty MONIKER as fatal, so emitting the
+  # line with no value would be worse than omitting it.
+  if [ -n "${moniker}" ]; then
+    cat <<EOF >> /etc/systemd/system/svoted.service.d/10-hardening.conf
+Environment=MONIKER=${moniker}
+EOF
+  fi
 
   systemctl daemon-reload
 }
@@ -839,6 +939,16 @@ cmd_join() {
   local force=0
   local installer
   local observed
+  local rc
+
+  # The moniker is this validator's public name: it goes into the registration
+  # payload and, when the wrapper bonds, the on-chain staking record. Requiring it
+  # up front is deliberate -- leaving it to the installer's prompt got a hostname
+  # entered as the validator name once already.
+  [ -n "$SVOTE_MONIKER" ] ||
+    die "no moniker configured. Set vote_validator_moniker in Terraform (e.g. \"ZF\"),
+  re-apply, re-run the startup script, then retry. This is the validator's public
+  name and ends up on chain, so it is not prompted for."
 
   if [ "$${1:-}" = "--force" ]; then
     force=1
@@ -893,22 +1003,40 @@ cmd_join() {
   fi
 
   echo ""
-  echo "Handing over to the upstream installer. It will ask for a validator name;"
-  echo "TLS is preset to $SVOTE_TLS_DOMAIN so it will not ask about that."
+  echo "Handing over to the upstream installer. Nothing to answer: the validator"
+  echo "name is preset to '$SVOTE_MONIKER' and TLS to $SVOTE_TLS_DOMAIN."
   echo ""
 
   # SVOTE_ALLOW_NO_PUBLIC_URL: with an explicit domain the installer aborts on
   # any Caddy/ACME hiccup *before* registering and installing the service. Let it
   # degrade to "joined but no public URL" instead; 'svote addr' still yields
   # something the admin can fund, and Caddy can be fixed afterwards.
-  env \
+  #
+  # timeout: the installer ends with an unbounded loop waiting for the node to
+  # report catching_up=false. A node that cannot start leaves it spinning
+  # forever, which would strand the operator before any of the post-join steps
+  # below -- including the key backup prompt. Time it out and carry on instead.
+  rc=0
+  timeout "$${SVOTE_JOIN_TIMEOUT:-3600}" env \
     SVOTE_HOME="$SVOTE_HOME" \
     SVOTE_ENV="$SVOTE_ENV" \
+    SVOTE_MONIKER="$SVOTE_MONIKER" \
     SVOTE_UPGRADE_MODE="$SVOTE_UPGRADE_MODE" \
     SVOTE_TLS_MODE=custom \
     SVOTE_DOMAIN="$SVOTE_TLS_DOMAIN" \
     SVOTE_ALLOW_NO_PUBLIC_URL=1 \
-    bash "$installer"
+    bash "$installer" || rc=$?
+
+  if [ "$rc" = 124 ]; then
+    echo ""
+    echo "NOTE: the installer hit the $${SVOTE_JOIN_TIMEOUT:-3600}s timeout, almost"
+    echo "      certainly in its wait-for-sync loop. Continuing with the post-join"
+    echo "      steps; check 'svote logs' and 'svote status' afterwards."
+  elif [ "$rc" != 0 ]; then
+    echo ""
+    echo "WARNING: the installer exited $rc. Continuing to the post-join steps so"
+    echo "         the signing key still gets backed up, but verify the result."
+  fi
 
   joined || die "the installer finished but no validator key was created at $SVOTE_HOME"
 
@@ -1170,15 +1298,30 @@ cmd_reset_snapshot() {
 }
 
 cmd_prestage_upgrade() {
-  local tag="$${1:-}"
-  [ -n "$tag" ] || die "usage: svote prestage-upgrade <release-tag>   (e.g. v1.1.0)"
+  # Plan name and tag are separate arguments because they genuinely differ: the
+  # live chain records an upgrade named 'v1' whose binary tag is v1.0.0. Defaulting
+  # the tag to the plan name is only right when a release is named after its plan.
+  local plan="$${1:-}"
+  local tag="$${2:-$${1:-}}"
+
+  if [ -z "$plan" ]; then
+    die "usage: svote prestage-upgrade <plan-name> [release-tag]
+
+  <plan-name>   the on-chain upgrade plan name, e.g. v1
+  [release-tag] the binary tag to stage, defaults to <plan-name>
+
+  The current plan name and its required tag are in:
+    jq '{name, height, tag: (.info | fromjson.tag)}' $SVOTE_HOME/data/upgrade-info.json"
+  fi
+
   require_joined
 
-  echo "Pre-staging $tag. Note this does not enable cosmovisor auto-download:"
-  echo "leaving DAEMON_ALLOW_DOWNLOAD_BINARIES=false keeps chain governance from"
-  echo "being able to run arbitrary binaries on this host."
+  echo "Pre-staging tag $tag for upgrade plan $plan."
+  echo "This does not enable cosmovisor auto-download: leaving"
+  echo "DAEMON_ALLOW_DOWNLOAD_BINARIES=false keeps chain governance from being able"
+  echo "to run arbitrary binaries on this host."
   curl -fsSL "https://shielded-vote.nyc3.digitaloceanspaces.com/scripts/upgrade/$tag/update_chain.sh" |
-    as_root bash -s -- --mode prepare --plan-name "$tag" --tag "$tag"
+    as_root bash -s -- --mode prepare --plan-name "$plan" --tag "$tag"
 }
 
 cmd_remove() {
@@ -1379,6 +1522,7 @@ main() {
   ensure_data_disk
   configure_sudoers
   write_svote_env_file
+  install_upgrade_staging
   write_caddyfile
   stage_svoted_hardening_dropin
   install_key_backup

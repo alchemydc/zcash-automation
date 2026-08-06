@@ -98,6 +98,8 @@ resource "google_compute_instance" "vote_validator" {
         hostname                 = format("%s-%d", var.hostname_prefix, count.index),
         join_script_sha256       = var.join_script_sha256,
         join_script_url          = var.join_script_url,
+        join_timeout_seconds     = var.join_timeout_seconds,
+        moniker                  = var.moniker,
         key_backup_age_recipient = var.key_backup_age_recipient,
         key_backup_bucket        = var.key_backup_bucket,
         key_backup_on_calendar   = var.key_backup_on_calendar,
