@@ -125,6 +125,14 @@ This module automates it:
 Backup cannot be scheduled before the join, because the keys do not exist yet.
 The timer ships disabled and is enabled by the first successful backup.
 
+The bucket lives in the root configuration, not this module, so it survives
+`tofu destroy` of the instance — that is the point of a backup. It is created
+only when `vote_validator_enabled` is true, and carries
+`lifecycle { prevent_destroy = true }`, so flipping that flag back to false
+fails the plan rather than quietly deleting every key archive. Decommissioning a
+validator is meant to be deliberate: take a final backup, verify you can decrypt
+it off-host, then remove the lifecycle block or drop the bucket from state.
+
 > **Rehearse the restore.** Run `svote restore-keys`, follow it end to end on a
 > workstation holding the identity file, and diff the result against the live
 > file. A backup you have never decrypted is not a backup.

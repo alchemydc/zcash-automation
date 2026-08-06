@@ -24,6 +24,12 @@ locals {
     Mainnet = 8233
     Testnet = 18233
   }
+
+  vote_validator_count = var.vote_validator_enabled ? 1 : 0
+
+  # Derived as a plain string rather than read off the bucket resource, so the
+  # module can be handed the name without indexing into a counted resource.
+  svote_keys_bucket_name = "${var.project}-svote-keys"
 }
 
 resource "google_project_service" "compute" {
@@ -197,8 +203,13 @@ resource "google_compute_firewall" "z3" {
   }
 }
 
+# The vote validator firewall rules all follow vote_validator_enabled. Two of
+# them open ports to the whole internet, so they should not exist while no
+# validator is deployed.
+#
 # Only allow SSH to the vote validator through IAP TCP forwarding by default.
 resource "google_compute_firewall" "sshd_vote_validator_iap" {
+  count      = local.vote_validator_count
   name       = "sshd-vote-validator-iap-firewall"
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
@@ -213,7 +224,7 @@ resource "google_compute_firewall" "sshd_vote_validator_iap" {
 }
 
 resource "google_compute_firewall" "sshd_vote_validator_public" {
-  count      = length(var.vote_validator_ssh_source_ranges) > 0 ? 1 : 0
+  count      = var.vote_validator_enabled && length(var.vote_validator_ssh_source_ranges) > 0 ? 1 : 0
   name       = "sshd-vote-validator-public-firewall"
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
@@ -231,6 +242,7 @@ resource "google_compute_firewall" "sshd_vote_validator_public" {
 # the chain considers it client-ready, and Let's Encrypt needs :80 to issue the
 # certificate Caddy serves on :443.
 resource "google_compute_firewall" "vote_validator_https" {
+  count      = local.vote_validator_count
   name       = "vote-validator-https-firewall"
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
@@ -245,6 +257,7 @@ resource "google_compute_firewall" "vote_validator_https" {
 }
 
 resource "google_compute_firewall" "vote_validator_p2p" {
+  count      = local.vote_validator_count
   name       = "vote-validator-p2p-firewall"
   network    = google_compute_network.zcash_network.self_link
   depends_on = [google_compute_network.zcash_network]
@@ -468,7 +481,7 @@ module "zcash-vote-validator" {
   tls_domain                  = var.vote_validator_tls_domain
   p2p_port                    = var.vote_validator_p2p_port
   join_script_sha256          = var.vote_validator_join_script_sha256
-  key_backup_bucket           = google_storage_bucket.svote_keys_bucket.name
+  key_backup_bucket           = local.svote_keys_bucket_name
   key_backup_age_recipient    = var.vote_validator_key_backup_age_recipient
   key_backup_on_calendar      = var.vote_validator_key_backup_on_calendar
   snapshot_on_calendar        = var.vote_validator_snapshot_on_calendar
@@ -488,9 +501,22 @@ module "zcash-vote-validator" {
 # Encrypted validator key archives. Kept outside the module so the bucket and its
 # object history survive `tofu destroy` of the instance, which is the whole point
 # of the backup.
+#
+# Gating it on vote_validator_enabled would otherwise mean that flipping the flag
+# back to false plans to DELETE this bucket and every validator key archive in
+# it. prevent_destroy turns that into a hard plan error instead of silent data
+# loss: decommissioning a validator has to be a deliberate act, not a side effect
+# of toggling a boolean. To actually remove it, take a final backup, verify you
+# can decrypt it off-host, then drop this lifecycle block or
+# `tofu state rm google_storage_bucket.svote_keys_bucket[0]`.
 resource "google_storage_bucket" "svote_keys_bucket" {
-  name     = "${var.project}-svote-keys"
+  count    = local.vote_validator_count
+  name     = local.svote_keys_bucket_name
   location = "US"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   uniform_bucket_level_access = true
 
@@ -512,11 +538,14 @@ resource "google_storage_bucket" "svote_keys_bucket" {
 # no business reading its own backup history back, and the archives are encrypted
 # to an age recipient it does not hold the identity for either.
 resource "google_storage_bucket_iam_binding" "svote_keys_binding_write" {
-  bucket = google_storage_bucket.svote_keys_bucket.name
+  count  = local.vote_validator_count
+  bucket = local.svote_keys_bucket_name
   role   = "roles/storage.objectCreator"
   members = [
     "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
   ]
+
+  depends_on = [google_storage_bucket.svote_keys_bucket]
 }
 
 resource "google_storage_bucket" "chaindata_bucket" {
@@ -669,6 +698,7 @@ EOT
 # into /var/log/syslog, which is what the Ops Agent ships. CometBFT emits one
 # "committed state ... height=N" line per block.
 resource "google_logging_metric" "TF_svote_block_height_distribution" {
+  count  = local.vote_validator_count
   name   = "TF_svote_block_height_distribution"
   filter = <<EOT
 logName="projects/${var.project}/logs/syslog"
