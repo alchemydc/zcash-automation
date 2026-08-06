@@ -191,6 +191,10 @@ ensure_data_disk() {
     fi
   done
 
+  # One level at a time: `install -d a/b` applies -o/-g only to the final
+  # component, which would leave ~/.local owned by root inside the app user's
+  # home.
+  install -o "$APP_USER" -g "$APP_USER" -d "$SVOTE_MOUNT_PATH/.local"
   install -o "$APP_USER" -g "$APP_USER" -d "$INSTALL_DIR"
 }
 
@@ -267,6 +271,23 @@ stage_svoted_hardening_dropin() {
   cat <<EOF > /etc/systemd/system/svoted.service.d/10-hardening.conf
 # Installed by ${module_role} startup, ahead of the unit that join.sh generates.
 [Service]
+
+# Do not resolve the interpreter through \$PATH. The wrapper's shebang is
+# '#!/usr/bin/env bash', so the generated unit depends on PATH lookup succeeding
+# inside the service's namespace; when it does not, the daemon dies at startup
+# with 'env: bash: Not a directory' and exit 126, which is opaque. An absolute
+# interpreter removes the lookup entirely. The empty ExecStart= is required to
+# reset the value inherited from the generated unit before setting a new one.
+ExecStart=
+ExecStart=/usr/bin/bash $INSTALL_DIR/svoted-wrapper.sh
+
+# Environment= accumulates across drop-ins with last-assignment-wins, so this
+# overrides the PATH the generated unit sets. Same entries minus the macOS
+# Homebrew path, plus the sbin directories.
+Environment=PATH=$INSTALL_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+WorkingDirectory=$SVOTE_MOUNT_PATH
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
