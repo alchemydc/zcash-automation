@@ -274,3 +274,127 @@ variable "z3_data_disk_sizes" {
     regtest = 10
   }
 }
+
+variable "vote_validator_enabled" {
+  description = "Whether to deploy a Valar Group Shielded-Vote validator"
+  type        = bool
+  default     = false
+}
+
+variable "vote_validator_hostname_prefix" {
+  description = "Instance naming prefix for the vote validator"
+  type        = string
+  default     = "zcash-vote-validator"
+}
+
+variable "vote_validator_instance_type" {
+  description = "GCP machine type for the vote validator. Valar Group recommends 4 vCPU / 8 GB."
+  type        = string
+  default     = "e2-standard-4"
+}
+
+variable "vote_validator_instance_count" {
+  description = "Number of vote validator instances. Keep the signing key on exactly one host."
+  type        = number
+  default     = 1
+}
+
+variable "vote_validator_boot_disk_size" {
+  description = "Size (in GB) of the vote validator boot disk"
+  type        = number
+  default     = 20
+}
+
+variable "vote_validator_data_disk_size" {
+  description = "Size (in GB) of the vote validator data disk. Valar Group recommends 120 GB."
+  type        = number
+  default     = 120
+}
+
+variable "vote_validator_data_disk_type" {
+  description = "Disk type for the vote validator data disk"
+  type        = string
+  default     = "pd-ssd"
+}
+
+variable "vote_validator_data_disk_snapshot" {
+  description = "Optional snapshot to rebuild the vote validator data disk from"
+  type        = string
+  default     = null
+}
+
+variable "vote_validator_svote_env" {
+  description = "Which Valar Group network to join: prod (zvote-1) or stage (svote-1)"
+  type        = string
+  default     = "prod"
+}
+
+variable "vote_validator_upgrade_mode" {
+  description = "How svoted runs under systemd: cosmovisor or direct"
+  type        = string
+  default     = "cosmovisor"
+}
+
+variable "vote_validator_tls_domain" {
+  description = <<-EOT
+    Public hostname Caddy requests a certificate for. Leave empty to derive an
+    sslip.io name from the reserved external IP (no DNS record needed). Set this
+    to a hostname you control, with an A record pointing at that IP, for anything
+    long-lived.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "vote_validator_join_script_sha256" {
+  description = <<-EOT
+    Expected SHA-256 of Valar Group's join.sh. When set, `svote join` refuses to
+    run an installer that does not match. Empty means the digest is printed but
+    not enforced.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "vote_validator_key_backup_age_recipient" {
+  description = <<-EOT
+    Public age recipient (age1...) that validator key archives are encrypted to,
+    generated off-host with `rage-keygen`. Key backup fails closed while this is
+    empty, so set it before joining.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "vote_validator_key_backup_on_calendar" {
+  description = "systemd OnCalendar expression for validator key backups"
+  type        = string
+  default     = "*-*-* 03:40:00"
+}
+
+variable "vote_validator_snapshot_on_calendar" {
+  description = "systemd OnCalendar expression for vote validator data disk snapshots"
+  type        = string
+  default     = "*-*-* 04:40:00"
+}
+
+variable "vote_validator_snapshot_retention_count" {
+  description = "Number of vote validator data disk snapshots to retain"
+  type        = number
+  default     = 7
+}
+
+variable "vote_validator_p2p_port" {
+  description = "Public CometBFT P2P port exposed by the vote validator"
+  type        = number
+  default     = 26656
+}
+
+variable "vote_validator_ssh_source_ranges" {
+  description = <<-EOT
+    Extra source ranges allowed to SSH to the vote validator, in addition to the
+    always-present IAP range. Empty means IAP only.
+  EOT
+  type        = list(string)
+  default     = []
+}

@@ -1,57 +1,65 @@
 #!/bin/bash
 set -euo pipefail
 
-LOG_FILE="/var/log/zcash-vote-validator-startup.log"
-exec > >(tee -a "$LOG_FILE" | logger -t zcash-vote-validator-startup) 2>&1
+LOG_FILE="/var/log/${module_role}-startup.log"
+exec > >(tee -a "$LOG_FILE" | logger -t "${module_role}-startup") 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
-export HOME="$${HOME:-/root}"
-export PATH="/usr/local/bin:/usr/bin:/bin:$${PATH}"
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-APP_USER="zcash-vote"
-APP_HOME="/home/$APP_USER"
-COMETBFT_HOME="$APP_HOME/.cometbft"
-ZCV_RELEASE_TAG="${zcv_release_tag}"
-HOSTNAME_PREFIX="${hostname_prefix}"
-INSTANCE_INDEX="${instance_index}"
-STARTUP_STATE_DIR="/var/lib/zcash-vote-validator-startup"
-PROVISIONING_COMPLETE_MARKER="$STARTUP_STATE_DIR/provisioning-complete"
+APP_USER="svote"
+SVOTE_MOUNT_PATH="${svote_mount_path}"
+SVOTE_HOME="$SVOTE_MOUNT_PATH/.svoted"
+INSTALL_DIR="$SVOTE_MOUNT_PATH/.local/bin"
+BASE_STATE_DIR="/var/lib/${module_role}"
+BASE_MARKER_PATH="$BASE_STATE_DIR/base-provisioned"
+DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 
 log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
 }
 
-skip_if_already_initialized() {
-    if [ -f "$PROVISIONING_COMPLETE_MARKER" ]; then
-        log "Startup provisioning already completed; skipping"
-        exit 0
-    fi
-}
-
-mark_initialization_complete() {
-    mkdir -p "$STARTUP_STATE_DIR"
-    touch "$PROVISIONING_COMPLETE_MARKER"
+ensure_user() {
+  # Home is the persistent data disk mount point, so the account is created
+  # without -m and the mount point itself is populated in ensure_data_disk.
+  if ! id -u "$APP_USER" >/dev/null 2>&1; then
+    log "Creating $APP_USER account with home $SVOTE_MOUNT_PATH"
+    useradd -M -d "$SVOTE_MOUNT_PATH" -s /bin/bash "$APP_USER"
+  fi
 }
 
 install_base_packages() {
-    log "Installing base packages"
-    apt-get update
-    apt-get install -y \
-        apt-transport-https \
-        ca-certificates \
-        curl \
-        gnupg \
-        jq \
-        golang-go \
-        tmux \
-        unzip \
-        htop
+  log "Installing base packages"
+  apt-get update
+  apt-get install -y \
+    ca-certificates \
+    curl \
+    htop \
+    jq \
+    lz4 \
+    tmux
+}
+
+install_ops_agent() {
+  local ops_agent_installer
+
+  if dpkg -s google-cloud-ops-agent >/dev/null 2>&1; then
+    log "Google Ops Agent already installed"
+    return
+  fi
+
+  log "Installing Google Ops Agent"
+  ops_agent_installer="/tmp/add-google-cloud-ops-agent-repo.sh"
+  curl -fsSL -o "$ops_agent_installer" https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+  bash "$ops_agent_installer" --also-install
+  rm -f "$ops_agent_installer"
 }
 
 install_tmux_config() {
-    log "Installing global tmux configuration"
-
-    cat <<'EOF' > /etc/tmux.conf
+  # The validator join is a long interactive session; tmux keeps it alive across
+  # an SSH disconnect.
+  log "Installing global tmux configuration"
+  cat <<'EOF' > /etc/tmux.conf
 # --- Screen Compatibility Basics ---
 
 # 1. Remap Prefix to Control-A
@@ -61,17 +69,13 @@ bind C-a send-prefix
 
 # 2. Basic Screen Behavior
 set -g history-limit 10000
-set -g default-command "$${SHELL}"
-
-# Set base index to 1 so windows start at 1
+set -g default-command "$SHELL"
 set -g base-index 1
 
 # 3. Navigation Bindings
 bind C-a last-window
 bind space next-window
 bind BSpace previous-window
-
-# --- F-Key Mappings (Direct press, no prefix) ---
 
 # F1 - F12 Select Windows 1 - 12
 bind -n F1 select-window -t 1
@@ -90,10 +94,10 @@ bind -n F12 select-window -t 12
 # Mouse Support for scrolling
 set -g mouse on
 
-# Performance Improvements
+# Performance improvements
 set -s escape-time 0
 
-# --- Status Bar ---
+# Status bar shows window indexes alongside names.
 set -g status-bg black
 set -g status-fg white
 set -g status-left ""
@@ -103,325 +107,965 @@ EOF
 }
 
 install_global_bash_aliases() {
-    local alias_line="alias ll='ls -laF'"
+  local alias_line="alias ll='ls -laF'"
 
-    if grep -Fqx "$alias_line" /etc/bash.bashrc; then
-        log "Global bash alias ll already configured"
-        return
+  if grep -Fqx "$alias_line" /etc/bash.bashrc; then
+    return
+  fi
+
+  printf '\n# Added by %s startup\n%s\n' "${module_role}" "$alias_line" >> /etc/bash.bashrc
+}
+
+ensure_rage() {
+  # rage provides the age encryption used to protect validator key backups. It is
+  # not packaged in Debian, so it comes from the upstream release .deb. Lifted
+  # from the z3 module's ensure_rage.
+  local dpkg_arch
+  local github_api_url
+  local rage_asset_url
+  local rage_package_path
+
+  if command -v rage-keygen >/dev/null 2>&1; then
+    log "rage already installed"
+    return
+  fi
+
+  dpkg_arch="$(dpkg --print-architecture)"
+  github_api_url="https://api.github.com/repos/str4d/rage/releases/latest"
+  rage_package_path="/tmp/rage_latest_$${dpkg_arch}.deb"
+
+  log "Installing latest rage binary package for architecture $${dpkg_arch}"
+  rage_asset_url="$(curl -fsSL "$github_api_url" | jq -r --arg suffix "_$dpkg_arch.deb" '.assets[] | select(.name | startswith("rage_") and endswith($suffix)) | .browser_download_url' | head -n 1)"
+
+  if [ -z "$rage_asset_url" ] || [ "$rage_asset_url" = "null" ]; then
+    log "No compatible rage Debian package found for architecture $${dpkg_arch}"
+    exit 1
+  fi
+
+  curl -fsSL "$rage_asset_url" -o "$rage_package_path"
+  apt-get install -y "$rage_package_path"
+  rm -f "$rage_package_path"
+}
+
+ensure_data_disk() {
+  local current_disk_format
+  local disk_uuid
+  local skel_file
+  local target
+
+  log "Preparing persistent data disk ${data_disk_name}"
+  current_disk_format="$(lsblk -i -n -o fstype "$DATA_DISK_PATH")"
+
+  if [ "$current_disk_format" != "ext4" ]; then
+    log "Formatting $DATA_DISK_PATH as ext4"
+    mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard "$DATA_DISK_PATH"
+  fi
+
+  mkdir -p "$SVOTE_MOUNT_PATH"
+  disk_uuid="$(blkid -s UUID -o value "$DATA_DISK_PATH")"
+
+  if ! grep -q " $SVOTE_MOUNT_PATH " /etc/fstab; then
+    echo "UUID=$disk_uuid $SVOTE_MOUNT_PATH ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+  fi
+
+  if ! mountpoint -q "$SVOTE_MOUNT_PATH"; then
+    mount "$SVOTE_MOUNT_PATH"
+  fi
+
+  # Only walk the whole tree when ownership is actually wrong (first boot, or a
+  # disk restored from a snapshot taken on a host with different UIDs). On an
+  # ordinary reboot this is a single stat instead of a recursive chown over
+  # ~100 GB of chain data.
+  if [ "$(stat -c %U "$SVOTE_MOUNT_PATH")" != "$APP_USER" ]; then
+    log "Taking ownership of $SVOTE_MOUNT_PATH for $APP_USER"
+    chown -R "$APP_USER:$APP_USER" "$SVOTE_MOUNT_PATH"
+  fi
+  chmod 700 "$SVOTE_MOUNT_PATH"
+
+  # The account was created with -M, so seed the shell dotfiles the first time
+  # the disk is mounted; `sudo -iu svote` expects them.
+  for skel_file in .bashrc .profile; do
+    target="$SVOTE_MOUNT_PATH/$skel_file"
+    if [ ! -f "$target" ] && [ -f "/etc/skel/$skel_file" ]; then
+      install -o "$APP_USER" -g "$APP_USER" -m 0644 "/etc/skel/$skel_file" "$target"
     fi
+  done
 
-    log "Installing global bash alias ll"
-    printf '\n# Added by zcash-vote-validator startup\n%s\n' "$alias_line" >> /etc/bash.bashrc
+  install -o "$APP_USER" -g "$APP_USER" -d "$INSTALL_DIR"
 }
 
-install_ops_agent() {
-    if dpkg -s google-cloud-ops-agent >/dev/null 2>&1; then
-        log "Google Ops Agent already installed"
-        return
-    fi
+configure_sudoers() {
+  # join.sh is not optional about this: it writes systemd units with `sudo tee`,
+  # installs Caddy with `sudo apt-get`, and calls `sudo systemctl` non
+  # interactively. Running the installer as an unprivileged account is still
+  # worth it, because the unit it generates hard-codes User=$(whoami) — running
+  # join.sh as root would leave svoted itself running as root.
+  local sudoers_file="/etc/sudoers.d/svote"
 
-    log "Installing Google Ops Agent"
-    curl -sS -o /tmp/add-google-cloud-ops-agent-repo.sh https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-    bash /tmp/add-google-cloud-ops-agent-repo.sh --also-install
+  log "Granting $APP_USER passwordless sudo (required by the upstream installer)"
+  cat <<EOF > "$sudoers_file.tmp"
+# Installed by ${module_role} startup. Required by Valar Group's join.sh, which
+# writes systemd units and installs packages via sudo. See
+# docs/svote-installer-security-analysis.md; this grant makes the $APP_USER
+# account root-equivalent and can be revoked once the validator is bonded.
+$APP_USER ALL=(ALL) NOPASSWD: ALL
+EOF
+
+  chmod 0440 "$sudoers_file.tmp"
+  if visudo -cqf "$sudoers_file.tmp"; then
+    mv "$sudoers_file.tmp" "$sudoers_file"
+  else
+    rm -f "$sudoers_file.tmp"
+    log "Refusing to install malformed sudoers fragment"
+    exit 1
+  fi
 }
 
-install_tailscale() {
-    if ! command -v tailscale >/dev/null 2>&1; then
-        log "Installing Tailscale"
-        curl -fsSL https://tailscale.com/install.sh | sh
-    else
-        log "Tailscale already installed"
-    fi
+write_svote_env_file() {
+  # Single source of truth for the operator CLI and the backup/snapshot units,
+  # so none of them have to be re-templated to change a value.
+  log "Writing /etc/default/svote"
 
-    if tailscale ip -4 >/dev/null 2>&1; then
-        log "Tailscale already joined; skipping (IP: $(tailscale ip -4))"
-        return
-    fi
+  cat <<EOF > /etc/default/svote
+# Written by ${module_role} startup. Consumed by /usr/local/bin/svote,
+# /usr/local/bin/svote-backup-keys and /usr/local/bin/svote-create-snapshot.
+SVOTE_APP_USER="$APP_USER"
+SVOTE_MOUNT_PATH="$SVOTE_MOUNT_PATH"
+SVOTE_HOME="$SVOTE_HOME"
+SVOTE_INSTALL_DIR="$INSTALL_DIR"
+SVOTE_ENV="${svote_env}"
+SVOTE_UPGRADE_MODE="${upgrade_mode}"
+SVOTE_TLS_DOMAIN="${tls_domain}"
+SVOTE_HELPER_API_PORT="${helper_api_port}"
+SVOTE_P2P_PORT="${p2p_port}"
+SVOTE_JOIN_SCRIPT_URL="${join_script_url}"
+SVOTE_JOIN_SCRIPT_SHA256="${join_script_sha256}"
+SVOTE_KEY_BACKUP_BUCKET="${key_backup_bucket}"
+SVOTE_KEY_BACKUP_AGE_RECIPIENT="${key_backup_age_recipient}"
+SVOTE_KEY_BACKUP_MARKER="$SVOTE_MOUNT_PATH/.key-backup-configured"
+SVOTE_ENABLE_SNAPSHOT_TIMER="${enable_snapshot_timer}"
+SVOTE_SNAPSHOT_RETENTION_COUNT="${snapshot_retention_count}"
+SVOTE_DATA_DISK_NAME="${data_disk_name}"
+SVOTE_GCLOUD_PROJECT="${gcloud_project}"
+SVOTE_GCLOUD_ZONE="${gcloud_zone}"
+SVOTE_HOSTNAME="${hostname}"
+EOF
 
-    log "Joining tailnet"
-    tailscale up --authkey="${tailscale_auth_key}" --hostname="$${HOSTNAME_PREFIX}-$${INSTANCE_INDEX}"
-
-    log "Waiting for Tailscale IP"
-    local retries=0
-    while ! tailscale ip -4 >/dev/null 2>&1; do
-        retries=$((retries + 1))
-        if [ "$retries" -ge 30 ]; then
-            log "Timed out waiting for Tailscale IP"
-            exit 1
-        fi
-        sleep 2
-    done
-    log "Tailscale IP: $(tailscale ip -4)"
+  chmod 0644 /etc/default/svote
 }
 
-ensure_user() {
-    if ! id -u "$APP_USER" >/dev/null 2>&1; then
-        useradd -m -s /bin/bash "$APP_USER"
-    fi
+stage_svoted_hardening_dropin() {
+  # Written before svoted.service exists. systemd applies drop-ins as soon as the
+  # unit appears, and unlike editing the generated unit this survives join.sh
+  # rewriting it. Upstream's unit ships none of these; the sibling
+  # zcash-vote-server repo's hand-written units do.
+  #
+  # ProtectHome is safe here because SVOTE_HOME lives under /var/lib, not /home.
+  log "Staging svoted systemd hardening drop-in"
+  install -d -m 0755 /etc/systemd/system/svoted.service.d
+
+  cat <<EOF > /etc/systemd/system/svoted.service.d/10-hardening.conf
+# Installed by ${module_role} startup, ahead of the unit that join.sh generates.
+[Service]
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LimitNOFILE=65536
+EOF
+
+  systemctl daemon-reload
 }
 
-install_go_tools() {
-    log "Installing CometBFT and grpcurl via go install"
+install_key_backup() {
+  # The validator signing key does not exist until `svote join` runs
+  # init-validator-keys, so this installs the tooling and leaves the timer
+  # disabled. `svote backup-keys` enables it after the first successful upload.
+  log "Installing validator key backup tooling"
 
-    su - "$APP_USER" -c '
-        export GOPATH="$HOME/go"
-        export GOBIN="$GOPATH/bin"
-        mkdir -p "$GOBIN"
-        go install github.com/cometbft/cometbft/cmd/cometbft@v0.38.17
-        go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
-    '
+  cat <<'EOF' > /usr/local/bin/svote-backup-keys
+#!/bin/bash
+# Encrypt the validator's key material to an age recipient and upload it to GCS.
+#
+# Runs as root from svote-backup-keys.service. The instance can write to the
+# bucket but cannot read it back and cannot decrypt what it wrote: the age
+# identity lives off-host with the operator.
+set -euo pipefail
+umask 077
 
-    # Make go-installed binaries available system-wide
-    ln -sf "$APP_HOME/go/bin/cometbft" /usr/local/bin/cometbft
-    ln -sf "$APP_HOME/go/bin/grpcurl" /usr/local/bin/grpcurl
+# shellcheck disable=SC1091
+. /etc/default/svote
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
 }
 
-install_vote_cometbft() {
-    local binary_url
-
-    log "Installing vote-cometbft from release $ZCV_RELEASE_TAG"
-
-    binary_url="https://github.com/hhanh00/zcv/releases/download/$${ZCV_RELEASE_TAG}/vote-cometbft"
-
-    curl -fsSL "$binary_url" -o /usr/local/bin/vote-cometbft
-    chmod 0755 /usr/local/bin/vote-cometbft
-
-    # vote.proto is in the repo source, not in the release assets
-    mkdir -p "$APP_HOME/proto"
-    curl -fsSL "https://raw.githubusercontent.com/hhanh00/zcv/main/zcvlib/protos/vote.proto" -o "$APP_HOME/proto/vote.proto"
-    chown -R "$APP_USER:$APP_USER" "$APP_HOME/proto"
+fail() {
+  log "ERROR: $*"
+  exit 1
 }
 
-configure_cometbft() {
-    log "Initializing and configuring CometBFT"
+if [ -z "$SVOTE_KEY_BACKUP_AGE_RECIPIENT" ]; then
+  fail "no age recipient configured (key_backup_age_recipient is empty). Refusing to upload plaintext signing keys. Generate one off-host with 'rage-keygen', set key_backup_age_recipient, and re-apply."
+fi
 
-    su - "$APP_USER" -c "cometbft init --home $COMETBFT_HOME"
+if [ -z "$SVOTE_KEY_BACKUP_BUCKET" ]; then
+  fail "no backup bucket configured (key_backup_bucket is empty)."
+fi
 
-    # Download genesis
-    curl -fsSL -L "${genesis_url}" -o "$COMETBFT_HOME/config/genesis.json"
-    chown "$APP_USER:$APP_USER" "$COMETBFT_HOME/config/genesis.json"
+if [ ! -f "$SVOTE_HOME/config/priv_validator_key.json" ]; then
+  fail "$SVOTE_HOME/config/priv_validator_key.json does not exist yet. There is nothing to back up until the validator has been created — run 'svote join' first."
+fi
 
-    # Configure seed peer
-    local config_file="$COMETBFT_HOME/config/config.toml"
-    sed -i "s|^seeds = .*|seeds = \"${seed}\"|" "$config_file"
-
-    # Set external address to Tailscale IP
-    local tailscale_ip
-    tailscale_ip="$(tailscale ip -4)"
-    sed -i "s|^external_address = .*|external_address = \"$${tailscale_ip}:26656\"|" "$config_file"
-
-    chown -R "$APP_USER:$APP_USER" "$COMETBFT_HOME"
+metadata_get() {
+  curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/$1"
 }
 
-install_systemd_services() {
-    log "Installing systemd services for cometbft and vote-cometbft"
+access_token() {
+  metadata_get "instance/service-accounts/default/token" | jq -r '.access_token'
+}
 
-    cat <<EOF > /etc/systemd/system/vote-cometbft.service
+GCS_TOKEN=""
+
+upload() {
+  local file="$1"
+  local object="$2"
+  local encoded
+
+  if [ -z "$GCS_TOKEN" ]; then
+    GCS_TOKEN="$(access_token)"
+  fi
+
+  # Object names are sent as a query parameter, so path separators must be escaped.
+  encoded="$(printf '%s' "$object" | sed 's|/|%2F|g')"
+
+  curl -fsS -X POST \
+    -H "Authorization: Bearer $GCS_TOKEN" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@$file" \
+    "https://storage.googleapis.com/upload/storage/v1/b/$SVOTE_KEY_BACKUP_BUCKET/o?uploadType=media&name=$encoded" \
+    >/dev/null
+}
+
+work_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$work_dir"
+}
+trap cleanup EXIT
+
+listing="$work_dir/paths"
+archive="$work_dir/keys.tar.age"
+digest_file="$work_dir/keys.tar.age.sha256"
+
+# priv_validator_state.json is deliberately excluded: it is mutable per-block
+# state, and restoring a stale copy invites double-signing.
+: > "$listing"
+for candidate in config/priv_validator_key.json config/node_key.json keyring-test; do
+  if [ -e "$SVOTE_HOME/$candidate" ]; then
+    echo "$candidate" >> "$listing"
+  else
+    log "WARNING: $candidate not present; not included in the archive"
+  fi
+done
+
+# pallas.* and ea.* are listed by upstream as critical but their location is not
+# documented, so look in the home root and one level down.
+( cd "$SVOTE_HOME" && find . -maxdepth 2 \( -name 'pallas.*' -o -name 'ea.*' \) -printf '%P\n' 2>/dev/null | sort ) >> "$listing"
+
+if [ ! -s "$listing" ]; then
+  fail "nothing to archive"
+fi
+
+log "Archiving $(wc -l < "$listing") path(s) from $SVOTE_HOME"
+tar -C "$SVOTE_HOME" -czf - -T "$listing" | rage -r "$SVOTE_KEY_BACKUP_AGE_RECIPIENT" -o "$archive"
+
+sha256sum "$archive" | awk '{print $1}' > "$digest_file"
+log "Encrypted archive is $(stat -c %s "$archive") bytes, sha256 $(cat "$digest_file")"
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+upload "$archive" "$SVOTE_HOSTNAME/keys-$stamp.tar.age"
+upload "$digest_file" "$SVOTE_HOSTNAME/keys-$stamp.tar.age.sha256"
+upload "$archive" "$SVOTE_HOSTNAME/latest.tar.age"
+upload "$digest_file" "$SVOTE_HOSTNAME/latest.tar.age.sha256"
+
+touch "$SVOTE_KEY_BACKUP_MARKER"
+
+log "Uploaded gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/keys-$stamp.tar.age"
+log "Restore with: rage -d -i <offline-identity-file> keys-$stamp.tar.age | tar -xzf -"
+EOF
+  chmod 0755 /usr/local/bin/svote-backup-keys
+
+  cat <<EOF > /etc/systemd/system/svote-backup-keys.service
 [Unit]
-Description=Vote CometBFT ABCI application
+Description=Back up Shielded-Vote validator keys to GCS, encrypted to an age recipient
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-User=$APP_USER
-WorkingDirectory=$APP_HOME
-ExecStart=/usr/local/bin/vote-cometbft
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vote-cometbft
-
-[Install]
-WantedBy=multi-user.target
+Type=oneshot
+ExecStart=/usr/local/bin/svote-backup-keys
 EOF
 
-    cat <<EOF > /etc/systemd/system/cometbft.service
+  cat <<EOF > /etc/systemd/system/svote-backup-keys.timer
 [Unit]
-Description=CometBFT node
-After=vote-cometbft.service
-Wants=vote-cometbft.service
+Description=Run Shielded-Vote validator key backups on a schedule
 
-[Service]
-Type=simple
-User=$APP_USER
-ExecStart=/usr/local/bin/cometbft start --home $COMETBFT_HOME
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=cometbft
+[Timer]
+OnCalendar=${key_backup_on_calendar}
+Persistent=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=timers.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable vote-cometbft.service cometbft.service
-    systemctl start vote-cometbft.service cometbft.service
+  systemctl daemon-reload
+  log "Key backup timer installed but left disabled; 'svote backup-keys' enables it after the first successful run"
 }
 
-install_helper_script() {
-    log "Installing zcash-vote helper script"
+install_snapshot_tooling() {
+  log "Installing data disk snapshot tooling"
 
-    cat <<'HELPEREOF' > /usr/local/bin/zcash-vote
+  cat <<'EOF' > /usr/local/bin/svote-create-snapshot
 #!/bin/bash
+# Snapshot the validator data disk, then prune old snapshots beyond the retention
+# count. Authenticates via the metadata server so the instance needs no gcloud.
 set -euo pipefail
 
-APP_USER="zcash-vote"
-APP_HOME="/home/$APP_USER"
-COMETBFT_HOME="$APP_HOME/.cometbft"
-PROTO_DIR="$APP_HOME/proto"
+# shellcheck disable=SC1091
+. /etc/default/svote
 
-usage() {
-    cat <<EOF
-Usage: zcash-vote <command>
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
 
-Commands:
-  promote              Promote this node to validator
-  show-validators      Show current validator set
-  coordinate           Show node ID and Tailscale IP for peering
-  set-election         Send election definition (--election-json <file>)
-  lock                 Lock the blockchain
-  unsafe-reset         Stop services and reset all chain data
-  start                Start cometbft and vote-cometbft services
-  stop                 Stop cometbft and vote-cometbft services
-  status               Show service status
-  logs                 Follow service logs
+if [ ! -f "$SVOTE_HOME/config/genesis.json" ]; then
+  log "No validator present at $SVOTE_HOME; nothing to snapshot"
+  exit 0
+fi
+
+chain_id="$(jq -r '.chain_id // empty' "$SVOTE_HOME/config/genesis.json")"
+if [ -z "$chain_id" ]; then
+  log "Could not read chain_id from genesis.json; nothing to snapshot"
+  exit 0
+fi
+
+metadata_get() {
+  curl -fsSL -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/$1"
+}
+
+access_token() {
+  metadata_get "instance/service-accounts/default/token" | jq -r '.access_token'
+}
+
+api="https://compute.googleapis.com/compute/v1/projects/$SVOTE_GCLOUD_PROJECT"
+snapshot_name="$SVOTE_DATA_DISK_NAME-$(date -u +%Y%m%d%H%M%S)"
+token="$(access_token)"
+
+svoted_was_active=0
+if systemctl is-active --quiet svoted; then
+  svoted_was_active=1
+  log "Stopping svoted for a consistent snapshot"
+  systemctl stop svoted
+  sleep 5
+fi
+
+restore_svoted() {
+  if [ "$svoted_was_active" = "1" ]; then
+    log "Starting svoted"
+    systemctl start svoted || true
+  fi
+}
+trap restore_svoted EXIT
+
+log "Creating snapshot $snapshot_name"
+curl -fsS \
+  -X POST \
+  -H "Authorization: Bearer $token" \
+  -H "Content-Type: application/json" \
+  "$api/zones/$SVOTE_GCLOUD_ZONE/disks/$SVOTE_DATA_DISK_NAME/createSnapshot" \
+  -d "{\"name\":\"$snapshot_name\",\"labels\":{\"purpose\":\"svote-state\",\"chain-id\":\"$chain_id\",\"source-disk\":\"$SVOTE_DATA_DISK_NAME\"}}" \
+  >/dev/null
+
+# Prune oldest-first, keeping SVOTE_SNAPSHOT_RETENTION_COUNT. Listing is filtered
+# by the source-disk label this script writes, so it never touches snapshots
+# belonging to another instance or another module.
+keep="$SVOTE_SNAPSHOT_RETENTION_COUNT"
+case "$keep" in
+  ''|*[!0-9]*) keep=7 ;;
+esac
+if [ "$keep" -lt 1 ]; then
+  keep=1
+fi
+
+# The explicit length guard matters: jq treats a negative slice end as an offset
+# from the end, so .[0:(length-keep)] with fewer snapshots than the retention
+# count would select real snapshots for deletion instead of none.
+stale="$(curl -fsS \
+  -H "Authorization: Bearer $token" \
+  "$api/global/snapshots?filter=labels.source-disk%3D$SVOTE_DATA_DISK_NAME" |
+  jq -r --argjson keep "$keep" '
+    (.items // [])
+    | sort_by(.creationTimestamp)
+    | if (length > $keep) then .[0:(length - $keep)] else [] end
+    | .[].name
+  ')"
+
+for old in $stale; do
+  log "Pruning old snapshot $old"
+  curl -fsS -X DELETE -H "Authorization: Bearer $token" "$api/global/snapshots/$old" >/dev/null ||
+    log "WARNING: could not delete $old"
+done
 EOF
+  chmod 0755 /usr/local/bin/svote-create-snapshot
+
+  cat <<EOF > /etc/systemd/system/svote-snapshot.service
+[Unit]
+Description=Create a snapshot of the Shielded-Vote validator data disk
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/svote-create-snapshot
+EOF
+
+  cat <<EOF > /etc/systemd/system/svote-snapshot.timer
+[Unit]
+Description=Run Shielded-Vote validator data disk snapshots on a schedule
+
+[Timer]
+OnCalendar=${snapshot_on_calendar}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
 }
 
-cmd_promote() {
-    local pub_key
-    pub_key="$(jq '.pub_key.value' "$COMETBFT_HOME/config/priv_validator_key.json")"
+install_operator_cli() {
+  log "Installing /usr/local/bin/svote operator CLI"
 
-    grpcurl -plaintext \
-        -import-path "$PROTO_DIR" \
-        -proto vote.proto \
-        -d "{\"pub_key\": $pub_key, \"power\": \"10\"}" \
-        localhost:9010 cash.z.vote.sdk.rpc.VoteStreamer/AddValidator
+  cat <<'EOF' > /usr/local/bin/svote
+#!/bin/bash
+# Operator front end for a Valar Group Shielded-Vote validator.
+#
+# Deliberately does not run the upstream installer unattended: join.sh begins
+# with an unconditional `rm -rf $SVOTE_HOME`, prompts for a moniker, and needs a
+# human to relay the approval request. This wrapper presets the environment it
+# expects, checks the installer's digest, and takes care of everything that can
+# be automated on either side of that one interactive step.
+set -euo pipefail
+
+# shellcheck disable=SC1091
+. /etc/default/svote
+
+export PATH="$SVOTE_INSTALL_DIR:/usr/local/bin:/usr/bin:/bin"
+
+VALIDATOR_URL="https://$SVOTE_TLS_DOMAIN"
+REGISTRATION_FILE="$SVOTE_MOUNT_PATH/REGISTRATION.md"
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
 }
 
-cmd_show_validators() {
-    curl -s localhost:26657/validators | jq .result
+# Most subcommands touch the validator home, which is owned by the app user.
+# Re-exec as that user when invoked as root so `sudo svote ...` behaves.
+reexec_as_app_user() {
+  if [ "$(id -un)" = "$SVOTE_APP_USER" ]; then
+    return 0
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    exec sudo -iu "$SVOTE_APP_USER" /usr/local/bin/svote "$@"
+  fi
+  die "run this as $SVOTE_APP_USER or root (try: sudo -iu $SVOTE_APP_USER svote $*)"
 }
 
-cmd_coordinate() {
-    local node_id
-    node_id="$(cometbft show-node-id --home "$COMETBFT_HOME")"
-    local ts_ip
-    ts_ip="$(tailscale ip -4)"
-    echo "Node ID:       $node_id"
-    echo "Tailscale IP:  $ts_ip"
-    echo "Seed address:  $${node_id}@$${ts_ip}:26656"
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  else
+    sudo "$@"
+  fi
 }
 
-cmd_set_election() {
-    local election_json=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --election-json)
-                election_json="$2"
-                shift 2
-                ;;
-            *)
-                echo "Unknown option: $1" >&2
-                exit 1
-                ;;
-        esac
-    done
+joined() {
+  [ -f "$SVOTE_HOME/config/priv_validator_key.json" ]
+}
 
-    if [ -z "$election_json" ]; then
-        echo "Usage: zcash-vote set-election --election-json <file>" >&2
-        exit 1
+require_joined() {
+  joined || die "no validator on this host yet. Run 'svote join' first."
+}
+
+svoted_or_die() {
+  command -v svoted >/dev/null 2>&1 || die "svoted is not installed. Run 'svote join' first."
+}
+
+validator_addr() {
+  svoted keys show validator -a --keyring-backend test --home "$SVOTE_HOME" 2>/dev/null || true
+}
+
+validator_valoper() {
+  svoted keys show validator --bech val -a --keyring-backend test --home "$SVOTE_HOME" 2>/dev/null || true
+}
+
+moniker() {
+  { sed -n 's/^moniker[[:space:]]*=[[:space:]]*"\(.*\)"$/\1/p' "$SVOTE_HOME/config/config.toml" 2>/dev/null || true; } | head -1
+}
+
+# Prompt helper. Two things to get right: a bare `read` returns non-zero at EOF,
+# which under `set -e` would abort mid-run when svote is invoked without a
+# terminal; and the prompt has to go to stderr, because callers read the answer
+# from stdout via command substitution.
+ask() {
+  local prompt="$1"
+  local fallback="$2"
+  local reply=""
+
+  printf '%s' "$prompt" >&2
+  if ! read -r reply; then
+    printf '\n' >&2
+    reply="$fallback"
+  fi
+  printf '%s' "$reply"
+}
+
+chain_id() {
+  jq -r '.chain_id // empty' "$SVOTE_HOME/config/genesis.json" 2>/dev/null || true
+}
+
+print_approval_message() {
+  cat <<MSG
+
+Send this to the Valar Group voting admin to request approval and funding:
+
+  Please approve my Shielded-Vote validator.
+  Name: $(moniker)
+  Validator address: $(validator_addr)
+  Public URL: $VALIDATOR_URL
+
+Once they approve and fund the operator address, the svoted wrapper bonds the
+validator on its own. Watch it with 'svote logs' and confirm with 'svote bonded'.
+MSG
+}
+
+write_registration_file() {
+  cat > "$REGISTRATION_FILE" <<REG
+# Shielded-Vote validator registration
+
+- Host: $SVOTE_HOSTNAME
+- Chain ID: $(chain_id)
+- Moniker: $(moniker)
+- Operator address: $(validator_addr)
+- Operator (valoper): $(validator_valoper)
+- Public URL: $VALIDATOR_URL
+- Joined at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+Approval is a manual, out-of-band step: message the Valar Group voting admin
+with the operator address above. After bonding, ask them to add the public URL
+to vote_servers in https://github.com/valargroup/token-holder-voting-config
+REG
+
+  # Same details into Cloud Logging, so they are retrievable without SSH.
+  logger -t svote-registration "host=$SVOTE_HOSTNAME chain_id=$(chain_id) moniker=$(moniker) operator=$(validator_addr) valoper=$(validator_valoper) url=$VALIDATOR_URL"
+}
+
+backup_keys() {
+  require_joined
+
+  if [ -z "$SVOTE_KEY_BACKUP_AGE_RECIPIENT" ]; then
+    die "no age recipient configured. Generate one off-host with 'rage-keygen', set key_backup_age_recipient in Terraform and re-apply. Refusing to back up signing keys unencrypted."
+  fi
+
+  echo "Backing up validator keys to gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/ ..."
+  as_root systemctl start svote-backup-keys.service
+  as_root journalctl -u svote-backup-keys.service -n 20 --no-pager
+
+  [ -f "$SVOTE_KEY_BACKUP_MARKER" ] || die "backup did not complete; see the log above"
+
+  if ! as_root systemctl is-enabled --quiet svote-backup-keys.timer 2>/dev/null; then
+    echo "Enabling the scheduled key backup timer."
+    as_root systemctl enable --now svote-backup-keys.timer
+  fi
+
+  echo "Done. Rehearse the restore before you rely on it: 'svote restore-keys'."
+}
+
+cmd_join() {
+  local force=0
+  local installer
+  local observed
+
+  if [ "$${1:-}" = "--force" ]; then
+    force=1
+    shift
+  fi
+
+  if joined && [ "$force" -eq 0 ]; then
+    die "a validator already exists at $SVOTE_HOME.
+  The upstream installer starts by deleting that directory, which would destroy
+  this validator's signing key and identity.
+  To repair chain state instead, use 'svote reset-snapshot'.
+  To deliberately discard this validator and create a new one: 'svote join --force'."
+  fi
+
+  if joined && [ "$force" -eq 1 ]; then
+    echo "WARNING: --force will delete $SVOTE_HOME and create a brand new validator identity."
+    echo "Backing up the existing keys first."
+    backup_keys
+    [ "$(ask 'Type RESET to continue: ' '')" = "RESET" ] || die "aborted; nothing was changed"
+  fi
+
+  installer="$(mktemp)"
+  # shellcheck disable=SC2064
+  trap "rm -f '$installer'" EXIT
+
+  echo "Fetching the installer from $SVOTE_JOIN_SCRIPT_URL ..."
+  curl -fsSL -o "$installer" "$SVOTE_JOIN_SCRIPT_URL"
+  observed="$(sha256sum "$installer" | awk '{print $1}')"
+  echo "Installer sha256: $observed"
+
+  if [ -n "$SVOTE_JOIN_SCRIPT_SHA256" ]; then
+    if [ "$observed" != "$SVOTE_JOIN_SCRIPT_SHA256" ]; then
+      die "installer digest does not match the pinned join_script_sha256 ($SVOTE_JOIN_SCRIPT_SHA256). Refusing to run it."
     fi
+    echo "Digest matches the pinned value."
+  else
+    echo "NOTE: join_script_sha256 is unset, so the digest above was not verified."
+    echo "      Pin it in Terraform to detect the installer changing under you."
+  fi
 
-    grpcurl -plaintext \
-        -import-path "$PROTO_DIR" \
-        -proto vote.proto \
-        -d "$(cat "$election_json")" \
-        localhost:9010 cash.z.vote.sdk.rpc.VoteStreamer/SetElection
+  echo ""
+  echo "Handing over to the upstream installer. It will ask for a validator name;"
+  echo "TLS is preset to $SVOTE_TLS_DOMAIN so it will not ask about that."
+  echo ""
+
+  # SVOTE_ALLOW_NO_PUBLIC_URL: with an explicit domain the installer aborts on
+  # any Caddy/ACME hiccup *before* registering and installing the service. Let it
+  # degrade to "joined but no public URL" instead; 'svote addr' still yields
+  # something the admin can fund, and Caddy can be fixed afterwards.
+  env \
+    SVOTE_HOME="$SVOTE_HOME" \
+    SVOTE_ENV="$SVOTE_ENV" \
+    SVOTE_UPGRADE_MODE="$SVOTE_UPGRADE_MODE" \
+    SVOTE_TLS_MODE=custom \
+    SVOTE_DOMAIN="$SVOTE_TLS_DOMAIN" \
+    SVOTE_ALLOW_NO_PUBLIC_URL=1 \
+    bash "$installer"
+
+  joined || die "the installer finished but no validator key was created at $SVOTE_HOME"
+
+  echo ""
+  echo "=== Post-join automation ==="
+  write_registration_file
+  echo "Registration details written to $REGISTRATION_FILE"
+
+  if [ "$SVOTE_ENABLE_SNAPSHOT_TIMER" = "true" ]; then
+    as_root systemctl enable --now svote-snapshot.timer
+    echo "Data disk snapshot timer enabled."
+  fi
+
+  echo ""
+  echo "The validator signing key now exists on this host and nowhere else."
+  echo "Nothing has backed it up yet."
+  answer="$(ask 'Back up validator keys to GCS now? [Y/n] ' 'Y')"
+  case "$${answer:-Y}" in
+    [Nn]*)
+      echo "Skipped. Run 'svote backup-keys' before you rely on this validator."
+      ;;
+    *)
+      backup_keys
+      ;;
+  esac
+
+  print_approval_message
 }
 
-cmd_lock() {
-    grpcurl -plaintext \
-        -import-path "$PROTO_DIR" \
-        -proto vote.proto \
-        localhost:9010 cash.z.vote.sdk.rpc.VoteStreamer/Lock
-}
-
-cmd_unsafe_reset() {
-    echo "Stopping services..."
-    systemctl stop vote-cometbft.service cometbft.service || true
-
-    echo "Removing vote.db..."
-    rm -rf "$APP_HOME/vote.db"
-
-    echo "Running cometbft unsafe-reset-all..."
-    su - "$APP_USER" -c "cometbft unsafe-reset-all --home $COMETBFT_HOME"
-
-    echo "Reset complete. Use 'zcash-vote start' to restart services."
-}
-
-cmd_start() {
-    systemctl start cometbft.service vote-cometbft.service
-}
-
-cmd_stop() {
-    systemctl stop vote-cometbft.service cometbft.service
+cmd_addr() {
+  require_joined
+  svoted_or_die
+  print_approval_message
 }
 
 cmd_status() {
-    systemctl status cometbft.service vote-cometbft.service --no-pager
+  require_joined
+  svoted_or_die
+  svoted status --home "$SVOTE_HOME" | jq '{
+    network: .node_info.network,
+    moniker: .node_info.moniker,
+    height: .sync_info.latest_block_height,
+    catching_up: .sync_info.catching_up
+  }'
+}
+
+cmd_bonded() {
+  require_joined
+  svoted_or_die
+  local valoper
+  local result
+  valoper="$(validator_valoper)"
+  [ -n "$valoper" ] || die "could not derive the operator address"
+
+  # A validator that has not been approved and funded yet simply is not on chain,
+  # and svoted exits non-zero for that. That is the expected state right after
+  # joining, so report it rather than failing.
+  result="$(svoted query staking validator "$valoper" --home "$SVOTE_HOME" --output json 2>/dev/null || true)"
+
+  if [ -z "$result" ]; then
+    echo "not on chain yet — waiting on the voting admin to approve and fund $valoper"
+    return 0
+  fi
+
+  echo "$result" | jq -r '.validator.status // .status // "unknown"'
 }
 
 cmd_logs() {
-    journalctl -u cometbft -u vote-cometbft -f
+  as_root journalctl -u svoted -f
 }
 
-if [ $# -eq 0 ]; then
-    usage
-    exit 1
+cmd_restore_keys() {
+  cat <<RESTORE
+Restoring validator keys
+========================
+
+Backups live in gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/ encrypted to
+$SVOTE_KEY_BACKUP_AGE_RECIPIENT. This host cannot decrypt them; the matching age
+identity is held off-host by the operator.
+
+  DANGER: the validator signing key must be live on exactly one host at a time.
+  Restoring onto a second host while the original still runs will double-sign.
+  Destroy or permanently stop the original first.
+
+From a workstation that holds the age identity:
+
+  gsutil cp gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/latest.tar.age .
+  gsutil cat gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/latest.tar.age.sha256
+  sha256sum latest.tar.age        # must match the line above
+  rage -d -i /path/to/identity.txt latest.tar.age | tar -tzf -   # inspect
+  rage -d -i /path/to/identity.txt latest.tar.age | tar -xzf -   # extract
+
+Then, on the replacement host, with svoted stopped:
+
+  sudo systemctl stop svoted
+  sudo -u $SVOTE_APP_USER cp config/priv_validator_key.json $SVOTE_HOME/config/
+  sudo -u $SVOTE_APP_USER cp config/node_key.json $SVOTE_HOME/config/
+  sudo -u $SVOTE_APP_USER cp -r keyring-test $SVOTE_HOME/
+  sudo systemctl start svoted
+
+priv_validator_state.json is deliberately not in the archive. Let svoted
+rebuild it, or restore chain state from a data disk snapshot instead.
+
+Do this as a drill at least once, before you need it.
+RESTORE
+}
+
+cmd_snapshot_now() {
+  as_root systemctl start svote-snapshot.service
+  as_root journalctl -u svote-snapshot.service -n 20 --no-pager
+}
+
+cmd_reset_snapshot() {
+  require_joined
+  echo "Backing up keys before touching chain state."
+  backup_keys
+  echo "Running the upstream snapshot reset."
+  curl -fsSL https://shielded-vote.nyc3.digitaloceanspaces.com/reset-validator-snapshot.sh |
+    env SVOTE_HOME="$SVOTE_HOME" bash
+}
+
+cmd_prestage_upgrade() {
+  local tag="$${1:-}"
+  [ -n "$tag" ] || die "usage: svote prestage-upgrade <release-tag>   (e.g. v1.1.0)"
+  require_joined
+
+  echo "Pre-staging $tag. Note this does not enable cosmovisor auto-download:"
+  echo "leaving DAEMON_ALLOW_DOWNLOAD_BINARIES=false keeps chain governance from"
+  echo "being able to run arbitrary binaries on this host."
+  curl -fsSL "https://shielded-vote.nyc3.digitaloceanspaces.com/scripts/upgrade/$tag/update_chain.sh" |
+    as_root bash -s -- --mode prepare --plan-name "$tag" --tag "$tag"
+}
+
+cmd_remove() {
+  require_joined
+  echo "Backing up keys before teardown."
+  backup_keys
+  [ "$(ask 'Type REMOVE to tear down this validator: ' '')" = "REMOVE" ] ||
+    die "aborted; nothing was changed"
+  curl -fsSL https://shielded-vote.nyc3.digitaloceanspaces.com/remove-validator.sh |
+    env SVOTE_HOME="$SVOTE_HOME" SVOTE_INSTALL_DIR="$SVOTE_INSTALL_DIR" bash
+}
+
+usage() {
+  cat <<USAGE
+svote — operate a Valar Group Shielded-Vote validator
+
+  svote join [--force]        Run the upstream installer interactively, then
+                              register, snapshot and back up automatically
+  svote addr                  Print the approval message for the voting admin
+  svote status                Sync status
+  svote bonded                On-chain bonding status
+  svote logs                  Follow svoted logs
+  svote backup-keys           Encrypt and upload the key material now
+  svote restore-keys          Print the off-host restore procedure
+  svote snapshot-now          Snapshot the data disk now
+  svote reset-snapshot        Re-sync chain state from a published snapshot
+  svote prestage-upgrade TAG  Stage a coordinated upgrade binary
+  svote remove                Tear the validator down
+
+Host:      $SVOTE_HOSTNAME
+Home:      $SVOTE_HOME
+Public URL $VALIDATOR_URL
+Backups:   gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/
+USAGE
+}
+
+subcommand="$${1:-help}"
+
+# Subcommands that read or write the validator home run as the app user. Re-exec
+# with the original argv intact before consuming it below.
+case "$subcommand" in
+  join|addr|status|bonded|backup-keys|reset-snapshot|prestage-upgrade|remove)
+    reexec_as_app_user "$@"
+    ;;
+esac
+
+if [ $# -gt 0 ]; then
+  shift
 fi
 
-command="$1"
-shift
-
-case "$command" in
-    promote)         cmd_promote ;;
-    show-validators) cmd_show_validators ;;
-    coordinate)      cmd_coordinate ;;
-    set-election)    cmd_set_election "$@" ;;
-    lock)            cmd_lock ;;
-    unsafe-reset)    cmd_unsafe_reset ;;
-    start)           cmd_start ;;
-    stop)            cmd_stop ;;
-    status)          cmd_status ;;
-    logs)            cmd_logs ;;
-    *)
-        echo "Unknown command: $command" >&2
-        usage
-        exit 1
-        ;;
+case "$subcommand" in
+  join)              cmd_join "$@" ;;
+  addr)              cmd_addr ;;
+  status)            cmd_status ;;
+  bonded)            cmd_bonded ;;
+  backup-keys)       backup_keys ;;
+  reset-snapshot)    cmd_reset_snapshot ;;
+  prestage-upgrade)  cmd_prestage_upgrade "$@" ;;
+  remove)            cmd_remove ;;
+  logs)              cmd_logs ;;
+  snapshot-now)      cmd_snapshot_now ;;
+  restore-keys)      cmd_restore_keys ;;
+  help|-h|--help)    usage ;;
+  *)                 usage; exit 1 ;;
 esac
-HELPEREOF
-
-    chmod 0755 /usr/local/bin/zcash-vote
+EOF
+  chmod 0755 /usr/local/bin/svote
 }
 
-log "Starting zcash-vote-validator initialization"
-skip_if_already_initialized
-install_base_packages
-install_tmux_config
-install_global_bash_aliases
-install_ops_agent
-install_tailscale
-ensure_user
-install_go_tools
-install_vote_cometbft
-configure_cometbft
-install_systemd_services
-install_helper_script
-mark_initialization_complete
-log "zcash-vote-validator initialization complete"
+install_login_banner() {
+  log "Installing login status banner"
+
+  # POSIX sh: /etc/profile.d is sourced by dash as well as bash.
+  cat <<'EOF' > /etc/profile.d/svote-status.sh
+# Shielded-Vote validator status, shown on interactive login.
+case "$-" in
+  *i*) ;;
+  *) return 0 2>/dev/null || exit 0 ;;
+esac
+
+[ -r /etc/default/svote ] || return 0
+# shellcheck disable=SC1091
+. /etc/default/svote
+
+printf '\n=== Shielded-Vote validator (%s) ===\n' "$SVOTE_HOSTNAME"
+
+if [ ! -f "$SVOTE_HOME/config/priv_validator_key.json" ]; then
+  printf 'Status:  not joined yet\n'
+  printf 'Next:    sudo -iu %s svote join\n\n' "$SVOTE_APP_USER"
+  return 0 2>/dev/null || exit 0
+fi
+
+printf 'Status:  joined   URL: https://%s\n' "$SVOTE_TLS_DOMAIN"
+
+if [ ! -f "$SVOTE_KEY_BACKUP_MARKER" ]; then
+  printf '\n  WARNING: the validator signing key has never been backed up.\n'
+  printf '           It exists only on this host. Run: svote backup-keys\n'
+elif ! systemctl is-enabled --quiet svote-backup-keys.timer 2>/dev/null; then
+  printf '\n  WARNING: scheduled key backups are not enabled. Run: svote backup-keys\n'
+else
+  printf 'Backups: %s\n' "$(systemctl show -p ActiveState --value svote-backup-keys.timer 2>/dev/null)"
+fi
+
+printf 'Help:    svote help\n\n'
+EOF
+  chmod 0644 /etc/profile.d/svote-status.sh
+}
+
+print_next_steps() {
+  log "============================================================"
+  log "${module_role} host initialization complete"
+  log ""
+  log "This host is prepared but has NO validator yet. Joining is deliberately"
+  log "a manual, interactive step: the upstream installer prompts for a name and"
+  log "begins by deleting any existing validator home."
+  log ""
+  log "NEXT STEPS:"
+  log "  1. SSH in:        gcloud compute ssh ${hostname} --tunnel-through-iap --zone ${gcloud_zone}"
+  log "  2. Become svote:  sudo -iu $APP_USER"
+  log "  3. Join:          svote join"
+  log "  4. Back up keys when prompted (or later: svote backup-keys)"
+  log "  5. Send the approval message printed at the end to the Valar Group admin"
+  log ""
+  log "Public URL once Caddy has a certificate: https://${tls_domain}"
+  log "Key backups: gs://${key_backup_bucket}/${hostname}/"
+
+  if [ -z "${key_backup_age_recipient}" ]; then
+    log ""
+    log "WARNING: key_backup_age_recipient is not set, so key backup will refuse"
+    log "         to run. Generate a recipient off-host with 'rage-keygen', set"
+    log "         key_backup_age_recipient and re-apply BEFORE joining."
+  fi
+
+  if [ "${restored_from_snapshot}" = "true" ]; then
+    log ""
+    log "NOTE: the data disk was restored from a snapshot, so a validator may"
+    log "      already be present. 'svote join' will refuse to overwrite it."
+    log "      Confirm with 'svote status'. Never run a restored signing key"
+    log "      alongside the host it came from: that double-signs."
+  fi
+
+  log "============================================================"
+}
+
+ensure_base_provisioning() {
+  if [ -f "$BASE_MARKER_PATH" ]; then
+    return
+  fi
+
+  log "Running one-time base provisioning"
+  mkdir -p "$BASE_STATE_DIR"
+  ensure_user
+  install_base_packages
+  install_ops_agent
+  install_tmux_config
+  install_global_bash_aliases
+  ensure_rage
+  touch "$BASE_MARKER_PATH"
+}
+
+main() {
+  log "Starting ${module_role} initialization for ${hostname}"
+
+  # Everything below is idempotent and re-runs on every boot, so updating this
+  # script and rebooting refreshes the operator tooling. Nothing here touches
+  # $SVOTE_HOME, which is why that is safe.
+  ensure_base_provisioning
+  ensure_data_disk
+  configure_sudoers
+  write_svote_env_file
+  stage_svoted_hardening_dropin
+  install_key_backup
+  install_snapshot_tooling
+  install_operator_cli
+  install_login_banner
+  print_next_steps
+
+  log "${module_role} initialization complete"
+}
+
+main "$@"
