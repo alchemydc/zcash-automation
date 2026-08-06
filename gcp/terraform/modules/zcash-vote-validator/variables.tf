@@ -200,6 +200,17 @@ variable "join_script_sha256" {
   }
 }
 
+variable "svote_admin_url" {
+  description = <<-EOT
+    Base URL of Valar Group's admin API, which `svote register` POSTs the signed
+    registration to. Empty derives it from the chain id exactly as join.sh does
+    (zvote-1 -> https://prod.svote.valargroup.org), which is what you want unless
+    you are joining a non-default deployment.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "key_backup_bucket" {
   description = <<-EOT
     GCS bucket that encrypted validator key archives are uploaded to. The

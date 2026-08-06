@@ -481,6 +481,7 @@ module "zcash-vote-validator" {
   tls_domain                  = var.vote_validator_tls_domain
   p2p_port                    = var.vote_validator_p2p_port
   join_script_sha256          = var.vote_validator_join_script_sha256
+  svote_admin_url             = var.vote_validator_svote_admin_url
   key_backup_bucket           = local.svote_keys_bucket_name
   key_backup_age_recipient    = var.vote_validator_key_backup_age_recipient
   key_backup_on_calendar      = var.vote_validator_key_backup_on_calendar

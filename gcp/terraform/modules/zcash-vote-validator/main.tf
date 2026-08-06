@@ -106,6 +106,7 @@ resource "google_compute_instance" "vote_validator" {
         restored_from_snapshot   = var.data_disk_snapshot != null,
         snapshot_on_calendar     = var.snapshot_on_calendar,
         snapshot_retention_count = var.snapshot_retention_count,
+        svote_admin_url          = var.svote_admin_url,
         svote_env                = var.svote_env,
         svote_mount_path         = var.svote_mount_path,
         tls_domain               = local.tls_domains[count.index],

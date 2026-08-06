@@ -94,6 +94,8 @@ as the `svote` user when needed.
 | `svote logs` | `journalctl -u svoted -f` |
 | `svote backup-keys` | Encrypt and upload key material now; enables the timer on first success |
 | `svote restore-keys` | Print the off-host restore procedure |
+| `svote register [--force]` | Re-send the signed registration with the current public URL. Refuses an sslip.io URL without `--force` |
+| `svote tls-status` | Configured domain, DNS match, certificate issuer/expiry, public reachability |
 | `svote snapshot-now` | Snapshot the data disk now |
 | `svote reset-snapshot` | Re-sync chain state from a published snapshot (backs keys up first) |
 | `svote prestage-upgrade TAG` | Stage a coordinated upgrade binary |
@@ -143,18 +145,90 @@ it off-host, then remove the lifecycle block or drop the bucket from state.
 
 ## TLS and the public URL
 
-With `vote_validator_tls_domain` empty (the default) the module derives an
-sslip.io hostname from the reserved external IP, e.g. `34-72-10-5.sslip.io`, and
-passes it to the installer as an explicit domain. No DNS record is needed.
+**Set `vote_validator_tls_domain` for anything you intend to publish.** This URL
+goes into a PR against
+[`valargroup/token-holder-voting-config`](https://github.com/valargroup/token-holder-voting-config)
+and is what wallets resolve, so it is the deployment's public identity.
 
-This deliberately avoids the installer's own auto mode, which asks `ifconfig.me`
-for the public IP — that would let a third party influence which certificate the
-validator requests.
+### Recommended: a real hostname, Cloudflare DNS-only
 
-For anything long-lived, set `vote_validator_tls_domain` to a hostname you
-control with an A record pointing at the reserved IP. sslip.io discloses the IP
-in the public URL and makes certificate renewal depend on a third-party wildcard
-DNS service staying up.
+```hcl
+vote_validator_tls_domain = "zvote.zfnd.org"
+```
+
+Create one A record pointing at the instance's **reserved** external address —
+`tofu output vote_validator_public_ips`:
+
+```
+Type: A    Name: zvote    Content: <reserved IP>    Proxy: DNS only (grey)    TTL: Auto
+```
+
+Grey cloud matters. Proxied (orange) puts Cloudflare in front of :443, which
+breaks Caddy's TLS-ALPN challenge and inserts a CDN into the vote path. The
+record is safe to manage by hand because `google_compute_address` is a separate
+resource from the instance: the address survives stop/start and full instance
+replacement, changing only if the address resource itself is destroyed.
+
+Caddy then obtains and renews a Let's Encrypt certificate itself. Verify with
+`svote tls-status`.
+
+`svote join` **refuses to run** if the configured domain does not resolve to this
+instance, because ACME would fail and the validator would otherwise register with
+an empty URL.
+
+### Fallback: derived sslip.io name
+
+With `vote_validator_tls_domain` empty, the module derives an sslip.io hostname
+from the reserved IP (e.g. `203-0-113-10.sslip.io`) so a throwaway test needs
+no DNS at all. This deliberately avoids the installer's own auto mode, which asks
+`ifconfig.me` for the public IP — that would let a third party influence which
+certificate the validator requests.
+
+Do not publish an sslip.io URL: it discloses the host IP and makes certificate
+renewal depend on a third-party wildcard DNS service. `svote register` refuses
+one without `--force`, and the login banner nags while one is in use.
+
+### Changing the hostname on a running validator
+
+The module owns `/etc/caddy/Caddyfile` precisely so this is a supported
+operation — `join.sh` also writes that file, but only during a join, and a join is
+destructive so it is never re-run.
+
+```bash
+# 1. create the new DNS record, wait for it to resolve
+# 2. set vote_validator_tls_domain in terraform.tfvars
+tofu apply
+
+# 3. on the instance, re-run provisioning: rewrites /etc/default/svote and the
+#    Caddyfile, then reloads Caddy (reload, not restart, so existing certs stay)
+sudo google_metadata_script_runner startup
+
+# 4. confirm the new certificate before telling anyone about it
+sudo -iu svote svote tls-status
+
+# 5. publish the corrected URL to the join queue
+sudo -iu svote svote register
+```
+
+Step 5 is not optional. The registration `join.sh` sent carries the URL that was
+current at join time, and upstream has no way to amend it short of a destructive
+re-join. `svote register` re-signs the same canonical payload with the new URL and
+re-POSTs it; it touches no keys or chain state, and works with `svoted` stopped.
+
+### If you later want Cloudflare proxying
+
+Worth it mainly for rate-limiting the unauthenticated helper API. It needs two
+things beyond flipping the cloud orange:
+
+- **A Cloudflare Origin CA certificate** on the box instead of Let's Encrypt,
+  with SSL mode Full (strict). Caddy's TLS-ALPN challenge cannot work behind the
+  proxy, and `join.sh` owns the Caddy install, so this means overriding more than
+  the Caddyfile.
+- **GCP firewall rules restricting 80/443 to Cloudflare's published ranges.**
+  Otherwise the proxy is trivially bypassed on the origin IP — which is
+  discoverable regardless, since P2P `:26656` must be reachable directly.
+
+Without the second part, proxying buys almost nothing.
 
 ## Pinning the installer
 

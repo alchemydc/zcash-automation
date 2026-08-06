@@ -356,6 +356,15 @@ variable "vote_validator_join_script_sha256" {
   default     = ""
 }
 
+variable "vote_validator_svote_admin_url" {
+  description = <<-EOT
+    Base URL of Valar Group's admin API used by `svote register`. Empty derives it
+    from the chain id, matching join.sh.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "vote_validator_key_backup_age_recipient" {
   description = <<-EOT
     Public age recipient (age1...) that validator key archives are encrypted to,

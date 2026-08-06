@@ -244,6 +244,7 @@ SVOTE_HELPER_API_PORT="${helper_api_port}"
 SVOTE_P2P_PORT="${p2p_port}"
 SVOTE_JOIN_SCRIPT_URL="${join_script_url}"
 SVOTE_JOIN_SCRIPT_SHA256="${join_script_sha256}"
+SVOTE_ADMIN_URL="${svote_admin_url}"
 SVOTE_KEY_BACKUP_BUCKET="${key_backup_bucket}"
 SVOTE_KEY_BACKUP_AGE_RECIPIENT="${key_backup_age_recipient}"
 SVOTE_KEY_BACKUP_MARKER="$SVOTE_MOUNT_PATH/.key-backup-configured"
@@ -256,6 +257,59 @@ SVOTE_HOSTNAME="${hostname}"
 EOF
 
   chmod 0644 /etc/default/svote
+}
+
+write_caddyfile() {
+  # The module owns the Caddyfile so that changing the public hostname is a
+  # supported operation. join.sh writes this file too, but only during a join,
+  # and a join is destructive so it is never re-run: without this, changing
+  # tls_domain would update /etc/default/svote and nothing else, leaving Caddy
+  # still serving a certificate for the old name.
+  #
+  # Same content shape as join.sh:1476-1486, so on a host whose domain has not
+  # changed this is a no-op.
+  local caddyfile="/etc/caddy/Caddyfile"
+  local desired
+  local tmp
+
+  if [ -z "${tls_domain}" ]; then
+    log "No TLS domain configured; leaving Caddy alone"
+    return
+  fi
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    log "Caddy is not installed yet (installed during 'svote join'); skipping Caddyfile"
+    return
+  fi
+
+  desired="$(printf '%s {\n    reverse_proxy localhost:%s\n}\n' "${tls_domain}" "${helper_api_port}")"
+
+  if [ -f "$caddyfile" ] && [ "$(cat "$caddyfile")" = "$desired" ]; then
+    log "Caddyfile already serves ${tls_domain}"
+  else
+    log "Writing Caddyfile for ${tls_domain} -> localhost:${helper_api_port}"
+    install -d -m 0755 /etc/caddy
+    tmp="$(mktemp)"
+    printf '%s' "$desired" > "$tmp"
+
+    if ! caddy validate --config "$tmp" --adapter caddyfile >/dev/null 2>&1; then
+      log "Refusing to install a Caddyfile that does not validate"
+      caddy validate --config "$tmp" --adapter caddyfile || true
+      rm -f "$tmp"
+      return 1
+    fi
+
+    install -m 0644 "$tmp" "$caddyfile"
+    rm -f "$tmp"
+  fi
+
+  # Reload rather than restart: a reload keeps existing connections and, more
+  # importantly, does not drop the certificates Caddy already holds.
+  if systemctl is-active --quiet caddy; then
+    systemctl reload caddy || systemctl restart caddy
+  else
+    systemctl enable --now caddy
+  fi
 }
 
 stage_svoted_hardening_dropin() {
@@ -660,6 +714,70 @@ chain_id() {
   jq -r '.chain_id // empty' "$SVOTE_HOME/config/genesis.json" 2>/dev/null || true
 }
 
+is_sslip_domain() {
+  case "$SVOTE_TLS_DOMAIN" in
+    *.sslip.io) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+own_public_ip() {
+  curl -fsSL --max-time 5 -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip" \
+    2>/dev/null || true
+}
+
+resolved_ips() {
+  # getent is present on Debian without pulling in dnsutils for dig.
+  { getent ahostsv4 "$SVOTE_TLS_DOMAIN" 2>/dev/null || true; } | awk '{print $1}' | sort -u
+}
+
+# Return 0 when SVOTE_TLS_DOMAIN resolves to this instance's public address.
+# sslip.io names resolve by construction, so they are taken on trust.
+dns_points_here() {
+  local mine
+  local ip
+
+  [ -n "$SVOTE_TLS_DOMAIN" ] || return 1
+  is_sslip_domain && return 0
+
+  mine="$(own_public_ip)"
+  [ -n "$mine" ] || return 1
+
+  for ip in $(resolved_ips); do
+    [ "$ip" = "$mine" ] && return 0
+  done
+  return 1
+}
+
+warn_if_sslip() {
+  is_sslip_domain || return 0
+  cat >&2 <<SSLIP
+
+  NOTE: this validator's public URL is $VALIDATOR_URL
+
+  An sslip.io name is fine for a smoke test, but do not publish it: it discloses
+  the host IP and makes certificate renewal depend on a third-party wildcard DNS
+  service. Before adding this validator to the public voting config, set
+  vote_validator_tls_domain to a hostname you control, re-apply, re-run the
+  startup script, then 'svote register'.
+SSLIP
+}
+
+# Admin API base. Empty means derive it from the chain id, matching
+# default_admin_url_for_chain in join.sh.
+admin_url() {
+  if [ -n "$SVOTE_ADMIN_URL" ]; then
+    printf '%s' "$SVOTE_ADMIN_URL"
+    return 0
+  fi
+  case "$(chain_id)" in
+    zvote-1) printf '%s' "https://prod.svote.valargroup.org" ;;
+    svote-1) printf '%s' "https://stage.svote.valargroup.org" ;;
+    *) printf '' ;;
+  esac
+}
+
 print_approval_message() {
   cat <<MSG
 
@@ -742,6 +860,19 @@ cmd_join() {
     [ "$(ask 'Type RESET to continue: ' '')" = "RESET" ] || die "aborted; nothing was changed"
   fi
 
+  # Fail before the installer runs rather than after. Caddy cannot obtain a
+  # certificate for a name that does not resolve here, and because we pass
+  # SVOTE_ALLOW_NO_PUBLIC_URL=1 the installer would otherwise carry on and
+  # register this validator with an empty URL.
+  if ! dns_points_here; then
+    die "$SVOTE_TLS_DOMAIN does not resolve to this instance ($(own_public_ip)).
+  Resolved to: $(resolved_ips | tr '\n' ' ')
+  Create the DNS record first, wait for it to propagate, then re-run:
+    $SVOTE_TLS_DOMAIN.  A  $(own_public_ip)     (DNS only, not proxied)
+  Let's Encrypt has to reach this host over :80/:443 for the name you configured."
+  fi
+  echo "DNS check: $SVOTE_TLS_DOMAIN resolves to this instance."
+
   installer="$(mktemp)"
   # shellcheck disable=SC2064
   trap "rm -f '$installer'" EXIT
@@ -805,12 +936,151 @@ cmd_join() {
   esac
 
   print_approval_message
+  warn_if_sslip
 }
 
 cmd_addr() {
   require_joined
   svoted_or_die
   print_approval_message
+  warn_if_sslip
+}
+
+# Re-send the signed registration with the current public URL.
+#
+# join.sh only registers as part of a full join, and a join begins by deleting
+# $SVOTE_HOME -- so without this, correcting a published URL would mean either
+# destroying the validator identity or hand-rolling sign-arbitrary and curl.
+# Nothing here touches keys or chain state, and sign-arbitrary reads the local
+# keyring, so this works with svoted stopped.
+cmd_register() {
+  local force=0
+  local base
+  local timestamp
+  local payload
+  local sig_json
+  local body
+  local result
+  local status
+
+  if [ "$${1:-}" = "--force" ]; then
+    force=1
+  fi
+
+  require_joined
+  svoted_or_die
+
+  base="$(admin_url)"
+  [ -n "$base" ] || die "no admin API base configured and chain id '$(chain_id)' is not recognised. Set svote_admin_url in Terraform."
+
+  [ -n "$SVOTE_TLS_DOMAIN" ] ||
+    die "no public URL configured. Set vote_validator_tls_domain, re-apply, re-run the startup script, then retry."
+
+  if is_sslip_domain && [ "$force" -eq 0 ]; then
+    die "refusing to register the sslip.io URL $VALIDATOR_URL.
+  This is what gets published in the voting config. Set vote_validator_tls_domain
+  to a hostname you control, re-apply, re-run the startup script, then retry.
+  Use 'svote register --force' only if you really do intend to publish the
+  sslip.io name."
+  fi
+
+  if ! dns_points_here; then
+    echo "WARNING: $SVOTE_TLS_DOMAIN does not currently resolve to this instance." >&2
+    echo "         Registering anyway, but clients will not reach this validator." >&2
+  fi
+
+  timestamp="$(date +%s)"
+
+  # Field order matters: the server re-derives this exact string to check the
+  # signature, so it has to match join.sh's build_register_payload byte for byte.
+  payload="$(jq -nc \
+    --arg oa "$(validator_addr)" \
+    --arg u "$VALIDATOR_URL" \
+    --arg m "$(moniker)" \
+    --argjson ts "$timestamp" \
+    '{operator_address:$oa,url:$u,moniker:$m,timestamp:$ts}')"
+
+  echo "Registering with $base"
+  echo "  operator: $(validator_addr)"
+  echo "  moniker:  $(moniker)"
+  echo "  url:      $VALIDATOR_URL"
+
+  sig_json="$(svoted sign-arbitrary "$payload" --from validator \
+    --keyring-backend test --home "$SVOTE_HOME" 2>/dev/null)" ||
+    die "could not sign the registration payload"
+
+  body="$(jq -nc \
+    --arg oa "$(validator_addr)" \
+    --arg u "$VALIDATOR_URL" \
+    --arg m "$(moniker)" \
+    --argjson ts "$timestamp" \
+    --arg s "$(echo "$sig_json" | jq -r '.signature')" \
+    --arg pk "$(echo "$sig_json" | jq -r '.pub_key')" \
+    '{operator_address:$oa,url:$u,moniker:$m,timestamp:$ts,signature:$s,pub_key:$pk}')"
+
+  result="$(curl -fsSL -X POST "$${base%/}/api/register-validator" \
+    -H "Content-Type: application/json" \
+    -d "$body" 2>/dev/null)" ||
+    die "could not reach the registration API at $base"
+
+  status="$(echo "$result" | jq -r '.status // empty' 2>/dev/null || true)"
+  case "$status" in
+    pending|registered|bonded)
+      echo "Registered: $status"
+      ;;
+    *)
+      echo "Unexpected response: $result" >&2
+      die "registration was not accepted"
+      ;;
+  esac
+
+  write_registration_file
+
+  cat <<PR
+
+Next: add this validator to the public voting config with a PR against
+https://github.com/valargroup/token-holder-voting-config (prod/dynamic-voting-config.json),
+appending to vote_servers:
+
+  $(jq -nc --arg url "$VALIDATOR_URL" --arg label "ZcashFoundation" '{url:$url,label:$label}')
+
+Confirm with the voting admin that the queue shows this URL and any earlier one is gone.
+PR
+}
+
+cmd_tls_status() {
+  local mine
+  local cert
+
+  echo "Configured domain: $${SVOTE_TLS_DOMAIN:-<none>}"
+  [ -n "$SVOTE_TLS_DOMAIN" ] || { echo "No public URL. Set vote_validator_tls_domain."; return 0; }
+
+  echo "Public URL:        $VALIDATOR_URL"
+  mine="$(own_public_ip)"
+  echo "This instance:     $${mine:-unknown}"
+  echo "DNS resolves to:   $(resolved_ips | tr '\n' ' ')"
+
+  if dns_points_here; then
+    echo "DNS check:         OK"
+  else
+    echo "DNS check:         MISMATCH - clients will not reach this host"
+  fi
+
+  if cert="$(echo | openssl s_client -servername "$SVOTE_TLS_DOMAIN" \
+      -connect "$SVOTE_TLS_DOMAIN:443" 2>/dev/null |
+      openssl x509 -noout -subject -issuer -enddate 2>/dev/null)"; then
+    printf '%s\n' "$cert" | sed 's/^/Certificate:       /'
+  else
+    echo "Certificate:       could not complete a TLS handshake"
+  fi
+
+  if curl -fsS --max-time 10 "$VALIDATOR_URL/cosmos/base/tendermint/v1beta1/node_info" >/dev/null 2>&1; then
+    echo "Helper API:        reachable over public HTTPS"
+  else
+    echo "Helper API:        NOT reachable (a 502 here means Caddy is fine but svoted is down)"
+  fi
+
+  warn_if_sslip
 }
 
 cmd_status() {
@@ -928,6 +1198,9 @@ svote — operate a Valar Group Shielded-Vote validator
   svote join [--force]        Run the upstream installer interactively, then
                               register, snapshot and back up automatically
   svote addr                  Print the approval message for the voting admin
+  svote register [--force]    Re-send the signed registration with the current
+                              public URL (use after changing the hostname)
+  svote tls-status            Domain, DNS, certificate and public reachability
   svote status                Sync status
   svote bonded                On-chain bonding status
   svote logs                  Follow svoted logs
@@ -950,7 +1223,7 @@ subcommand="$${1:-help}"
 # Subcommands that read or write the validator home run as the app user. Re-exec
 # with the original argv intact before consuming it below.
 case "$subcommand" in
-  join|addr|status|bonded|backup-keys|reset-snapshot|prestage-upgrade|remove)
+  join|addr|register|tls-status|status|bonded|backup-keys|reset-snapshot|prestage-upgrade|remove)
     reexec_as_app_user "$@"
     ;;
 esac
@@ -962,6 +1235,8 @@ fi
 case "$subcommand" in
   join)              cmd_join "$@" ;;
   addr)              cmd_addr ;;
+  register)          cmd_register "$@" ;;
+  tls-status)        cmd_tls_status ;;
   status)            cmd_status ;;
   bonded)            cmd_bonded ;;
   backup-keys)       backup_keys ;;
@@ -1003,6 +1278,13 @@ fi
 
 printf 'Status:  joined   URL: https://%s\n' "$SVOTE_TLS_DOMAIN"
 
+case "$SVOTE_TLS_DOMAIN" in
+  *.sslip.io)
+    printf '\n  NOTE: this is an sslip.io URL. Fine for testing, but do not publish it.\n'
+    printf '        Set vote_validator_tls_domain, re-apply, then: svote register\n'
+    ;;
+esac
+
 if [ ! -f "$SVOTE_KEY_BACKUP_MARKER" ]; then
   printf '\n  WARNING: the validator signing key has never been backed up.\n'
   printf '           It exists only on this host. Run: svote backup-keys\n'
@@ -1034,6 +1316,24 @@ print_next_steps() {
   log ""
   log "Public URL once Caddy has a certificate: https://${tls_domain}"
   log "Key backups: gs://${key_backup_bucket}/${hostname}/"
+
+  case "${tls_domain}" in
+    *.sslip.io)
+      log ""
+      log "NOTE: no tls_domain was set, so the public URL is derived from this"
+      log "      instance's IP via sslip.io. That is fine for a smoke test, but it"
+      log "      is the URL that gets published in the voting config, so set"
+      log "      vote_validator_tls_domain to a hostname you control before"
+      log "      registering. DNS must point at the reserved address, DNS-only"
+      log "      (not proxied), before 'svote join' will proceed."
+      ;;
+    *)
+      log ""
+      log "DNS must already point ${tls_domain} at this instance's reserved"
+      log "address, DNS-only (not proxied), or 'svote join' will refuse to run:"
+      log "Let's Encrypt has to reach :80/:443 for that name."
+      ;;
+  esac
 
   if [ -z "${key_backup_age_recipient}" ]; then
     log ""
@@ -1079,6 +1379,7 @@ main() {
   ensure_data_disk
   configure_sudoers
   write_svote_env_file
+  write_caddyfile
   stage_svoted_hardening_dropin
   install_key_backup
   install_snapshot_tooling
