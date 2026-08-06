@@ -231,6 +231,33 @@ variable "join_timeout_seconds" {
   default     = 3600
 }
 
+variable "allow_binary_autodownload" {
+  description = <<-EOT
+    Let cosmovisor download the upgrade binary named in an on-chain upgrade plan,
+    always with DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true.
+
+    This is a deliberate tradeoff, not a default worth changing casually. Enabling
+    it means chain governance decides which binary runs on this host: the checksum
+    travels in the governance proposal itself, so requiring one proves integrity
+    against the proposal, not against governance. It is enabled because a
+    foundation validator silently dropping out of a vote is the worse outcome. See
+    docs/svote-installer-security-analysis.md section 2.11.
+
+    It is a fallback, not the plan: pre-stage with `svote prestage-upgrade`. It also
+    cannot cover every case — plans whose `info` carries no `binaries` map (such as
+    the already-applied `v1`) are not downloadable, which is why
+    svote-stage-upgrades still exists.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "upgrade_check_on_calendar" {
+  description = "systemd OnCalendar expression for the daily upgrade-readiness check"
+  type        = string
+  default     = "*-*-* 07:20:00"
+}
+
 variable "svote_admin_url" {
   description = <<-EOT
     Base URL of Valar Group's admin API, which `svote register` POSTs the signed

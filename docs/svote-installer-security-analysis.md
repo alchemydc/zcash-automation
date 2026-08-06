@@ -220,15 +220,54 @@ it. Denial of service against the helper API looks cheap.
 
 ### 2.11 Cosmovisor auto-download is code execution via governance — `1784`
 
-`join.sh` sets `DAEMON_ALLOW_DOWNLOAD_BINARIES=false`, which is the right
-default. The published upgrade documentation then instructs operators to enable
-it alongside `DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true`. Requiring a checksum does
-not help much here: the checksum travels in the on-chain upgrade proposal, so
-enabling this grants chain governance the ability to run arbitrary binaries on
-every validator.
+`join.sh` sets `DAEMON_ALLOW_DOWNLOAD_BINARIES=false`. The published upgrade
+documentation then instructs operators to enable it alongside
+`DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true`.
 
-*Module stance:* left `false`. `svote prestage-upgrade <tag>` uses
-`--mode prepare` so binaries are staged deliberately.
+Requiring a checksum helps less than it appears to. The checksum travels *inside*
+the on-chain upgrade proposal's `info` field, next to the URL it describes:
+
+```json
+"binaries": {
+  "linux/amd64": "https://github.com/valargroup/vote-sdk/releases/download/v1.1.0/…tar.gz?checksum=sha256:bb8df4e9…"
+}
+```
+
+So the checksum proves integrity **against the proposal**, not against governance.
+Whoever can land an upgrade proposal chooses which binary every validator that has
+this enabled will run, and can supply a matching checksum for it. The mitigation
+`MUST_HAVE_CHECKSUM=true` actually provides is narrower: it prevents accepting a
+binary for which the proposal specified *no* checksum, and it prevents a
+compromised release host from serving different bytes than the proposal named.
+
+**Module stance: enabled, as an accepted risk.** `allow_binary_autodownload`
+defaults to `true`, setting both `DAEMON_ALLOW_DOWNLOAD_BINARIES=true` and
+`DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true`. The reasoning:
+
+- A coordinated upgrade halts the node at a fixed height. For a foundation
+  validator, silently dropping out of a live vote is a worse outcome — in both
+  availability and reputational terms — than the marginal risk of governance
+  choosing a binary.
+- The trust is not new. Governance already decides the state machine this node
+  executes; the difference is whether a human fetches the binary or cosmovisor
+  does. A malicious upgrade is a chain-wide event, not one this validator escapes
+  by pre-staging.
+- It is a fallback, not the plan. Pre-staging via `svote prestage-upgrade` remains
+  the primary path, `svote upgrade-status` reports readiness, and a daily timer
+  plus login banner chase it.
+
+Two things follow, and both are load-bearing:
+
+1. **`MUST_HAVE_CHECKSUM=true` is mandatory, not decorative.** Without it the same
+   mechanism will accept an unchecksummed binary named by a proposal. Never enable
+   the first without the second.
+2. **Auto-download does not cover every plan.** The already-applied `v1` plan's
+   `info` carries no `binaries` map at all, so a validator joining from a snapshot
+   cannot self-heal through download — hence `svote-stage-upgrades`, which stages
+   the installed binary only when the plan's recorded tag is satisfied by it.
+
+Revisit if the threat model changes — in particular if governance ever becomes
+easier to capture than the release bucket in §1.
 
 ### 2.12 sslip.io as a hard dependency — `1386`
 
@@ -285,7 +324,11 @@ it is a signed credential with no expiry the operator can reason about, and the
 - The snapshot archive listing is validated before extraction, rejecting any entry outside `data/` and any `..` traversal (`766-769`) — a real path-traversal defence, not a token one.
 - Local `priv_validator_state.json` is preserved across a snapshot restore and the restored consensus WAL is discarded (`771-790`), which is precisely the correct double-signing precaution.
 - `genesis.json` is validated against the built binary and its `chain_id` cross-checked before use (`1127-1138`).
-- Cosmovisor auto-download defaults to off (`1784`).
+- Cosmovisor auto-download defaults to off (`1784`) — a safe default, even though
+  this deployment deliberately overrides it (§2.11).
+- Upgrade plans carry per-platform binaries with SHA-256 checksums in the URL
+  fragment, which is what makes `DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true`
+  meaningful at all.
 - The interactive reset gate requires typing `RESET` and enumerates what will be destroyed (`496-527`).
 
 ---

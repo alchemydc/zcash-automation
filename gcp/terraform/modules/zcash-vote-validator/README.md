@@ -87,6 +87,68 @@ wrapper bonds, the on-chain staking record. Upstream prompts for it immediately
 after reporting the preset TLS domain, which makes answering with the hostname an
 easy and expensive mistake.
 
+## Coordinated upgrades
+
+The chain halts at a governance-scheduled height and expects every validator to
+switch binaries there. Miss it and the node stops until someone intervenes.
+
+Check readiness at any time:
+
+```bash
+svote upgrade-status
+```
+
+It reports the scheduled plan, blocks remaining and rough ETA, the required tag
+versus what is installed, whether the binary is staged, and one of three verdicts:
+`READY`, `NOT STAGED`, or `ACTION NEEDED` (exit 1). A daily
+`svote-upgrade-check.timer` runs the same check and logs the verdict to journald
+under `svote-upgrade-check`, which the Ops Agent ships; the root configuration
+defines a `TF_svote_upgrade_action_needed` log metric so an alert policy can be
+attached. The login banner nags while a pending upgrade is unresolved.
+
+### Preparing
+
+```bash
+svote prestage-upgrade          # discovers plan name and tag from the chain
+```
+
+This runs upstream's `update_chain.sh --mode prepare`, which downloads and stages
+the new binary at `cosmovisor/upgrades/<plan>/bin/svoted` **without stopping the
+validator**, then verifies and re-reports status. Pass `<plan> [tag]` explicitly to
+stage something other than the current plan — they genuinely differ, e.g. plan
+`v1` requires tag `v1.0.0`.
+
+Verification runs with `--skip-cosmovisor-service`, which is required and correct
+here: `verify-prestage` otherwise asserts the unit's `ExecStart` *is* the
+cosmovisor binary, which only holds after `--mode migrate`. This module keeps the
+wrapper-based unit `join.sh` installs, and cosmovisor still performs the switch as
+a child of the wrapper. Upstream's own `join.sh` install fails that same check.
+
+> **Never run `update_chain.sh --mode migrate`.** It rewrites the systemd unit and
+> "removes conflicting drop-ins" — which is `10-hardening.conf`, carrying the
+> `ExecStart` interpreter fix, the sandboxing, the `MONIKER` pin and the
+> `ExecStartPre` staging helper. The node would go straight back to failing with
+> `env: 'bash': Not a directory`. It would also fight this module, which rewrites
+> that drop-in on every boot, and drop-ins override the unit. `prepare` is
+> sufficient — we already run cosmovisor.
+
+### Auto-download
+
+`allow_binary_autodownload` defaults to **true**, setting
+`DAEMON_ALLOW_DOWNLOAD_BINARIES=true` and `DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true`
+so cosmovisor can fetch the binary named in the plan if pre-staging was missed.
+
+This is a deliberate tradeoff, not a convenience. The checksum travels inside the
+governance proposal, so requiring one proves integrity against the proposal — not
+against governance. Enabling it means chain governance effectively chooses which
+binary runs here. It is on because a foundation validator silently dropping out of
+a vote is the worse outcome. See
+[`docs/svote-installer-security-analysis.md`](../../../docs/svote-installer-security-analysis.md)
+§2.11.
+
+It is a fallback, not a substitute for pre-staging — and it cannot cover every
+case, which is the next section.
+
 ## Cosmovisor and already-applied upgrades
 
 Joining from a published snapshot restores `data/upgrade-info.json` describing an
@@ -94,6 +156,11 @@ upgrade the chain has long since applied — currently `v1` at height 802461,
 requiring binary tag `v1.0.0`. Cosmovisor reads that on start, decides it must run
 `cosmovisor/upgrades/v1/bin/svoted`, finds only `genesis/bin/svoted`, and exits 1
 because `DAEMON_ALLOW_DOWNLOAD_BINARIES=false`. Every new validator hits this.
+
+Auto-download cannot rescue this case: that plan's `info` carries **no `binaries`
+map**, so with `DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true` there is nothing for
+cosmovisor to fetch. Only newer plans (such as `v1.1.0`) ship binaries. That is why
+both mechanisms exist.
 
 `svote-stage-upgrades` runs as `ExecStartPre` and stages the installed binary for
 that upgrade — but only when it is safe to: the plan records its required tag in
@@ -122,6 +189,7 @@ as the `svote` user when needed.
 | `svote restore-keys` | Print the off-host restore procedure |
 | `svote register [--force]` | Re-send the signed registration with the current public URL. Refuses an sslip.io URL without `--force` |
 | `svote tls-status` | Configured domain, DNS match, certificate issuer/expiry, public reachability |
+| `svote upgrade-status` | Readiness for the next coordinated upgrade; exits 1 on `ACTION NEEDED` |
 | `svote snapshot-now` | Snapshot the data disk now |
 | `svote reset-snapshot` | Re-sync chain state from a published snapshot (backs keys up first) |
 | `svote prestage-upgrade PLAN [TAG]` | Stage a coordinated upgrade binary. Plan name and tag are separate because they differ in practice — the live chain's plan `v1` wants tag `v1.0.0` |

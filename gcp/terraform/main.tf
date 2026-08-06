@@ -484,6 +484,8 @@ module "zcash-vote-validator" {
   svote_admin_url             = var.vote_validator_svote_admin_url
   moniker                     = var.vote_validator_moniker
   join_timeout_seconds        = var.vote_validator_join_timeout_seconds
+  allow_binary_autodownload   = var.vote_validator_allow_binary_autodownload
+  upgrade_check_on_calendar   = var.vote_validator_upgrade_check_on_calendar
   key_backup_bucket           = local.svote_keys_bucket_name
   key_backup_age_recipient    = var.vote_validator_key_backup_age_recipient
   key_backup_on_calendar      = var.vote_validator_key_backup_on_calendar
@@ -730,6 +732,36 @@ EOT
   }
 
   value_extractor = "REGEXP_EXTRACT(jsonPayload.message, \"height=([0-9]+)\")"
+
+  label_extractors = {
+    instance_id = "EXTRACT(resource.labels.instance_id)"
+  }
+}
+
+# svote-upgrade-check.timer runs `svote upgrade-status` daily and logs its verdict
+# under the svote-upgrade-check identifier. A coordinated upgrade halts the node if
+# it is missed, so this counter exists to hang an alert policy off. There are no
+# alert policies in this configuration yet; the metric is the prerequisite.
+resource "google_logging_metric" "TF_svote_upgrade_action_needed" {
+  count  = local.vote_validator_count
+  name   = "TF_svote_upgrade_action_needed"
+  filter = <<EOT
+logName="projects/${var.project}/logs/syslog"
+resource.type="gce_instance"
+jsonPayload.message=~"Verdict:\\s+(ACTION NEEDED|NOT STAGED)"
+EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "TF Shielded-Vote Validator Upgrade Action Needed"
+
+    labels {
+      key        = "instance_id"
+      value_type = "STRING"
+    }
+  }
 
   label_extractors = {
     instance_id = "EXTRACT(resource.labels.instance_id)"

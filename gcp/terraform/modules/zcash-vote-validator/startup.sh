@@ -247,9 +247,11 @@ SVOTE_JOIN_SCRIPT_SHA256="${join_script_sha256}"
 SVOTE_ADMIN_URL="${svote_admin_url}"
 SVOTE_MONIKER="${moniker}"
 SVOTE_JOIN_TIMEOUT="${join_timeout_seconds}"
+SVOTE_ALLOW_BINARY_AUTODOWNLOAD="${allow_binary_autodownload}"
 SVOTE_KEY_BACKUP_BUCKET="${key_backup_bucket}"
 SVOTE_KEY_BACKUP_AGE_RECIPIENT="${key_backup_age_recipient}"
 SVOTE_KEY_BACKUP_MARKER="$SVOTE_MOUNT_PATH/.key-backup-configured"
+SVOTE_UPGRADE_MARKER="$SVOTE_MOUNT_PATH/.upgrade-action-needed"
 SVOTE_ENABLE_SNAPSHOT_TIMER="${enable_snapshot_timer}"
 SVOTE_SNAPSHOT_RETENTION_COUNT="${snapshot_retention_count}"
 SVOTE_DATA_DISK_NAME="${data_disk_name}"
@@ -265,8 +267,12 @@ install_upgrade_staging() {
   # Joining from a published snapshot restores data/upgrade-info.json describing
   # an already-applied upgrade. Cosmovisor reads that on start, decides it must
   # run cosmovisor/upgrades/<name>/bin/svoted, finds only genesis/bin/svoted, and
-  # exits 1 because we keep DAEMON_ALLOW_DOWNLOAD_BINARIES=false. Every new
-  # validator hits this, so stage the binary before svoted starts.
+  # exits 1. Every new validator hits this, so stage the binary before svoted
+  # starts.
+  #
+  # Auto-download cannot rescue this case even when enabled: that plan's `info`
+  # carries no `binaries` map, so with DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true
+  # there is nothing for cosmovisor to fetch. Only newer plans ship binaries.
   #
   # Blindly staging the installed binary would be wrong for a *future* upgrade --
   # running an old binary past an upgrade height diverges the app hash. So this
@@ -449,6 +455,19 @@ EOF
   if [ -n "${moniker}" ]; then
     cat <<EOF >> /etc/systemd/system/svoted.service.d/10-hardening.conf
 Environment=MONIKER=${moniker}
+EOF
+  fi
+
+  # Cosmovisor auto-download. The generated unit sets
+  # DAEMON_ALLOW_DOWNLOAD_BINARIES=false; Environment= accumulates across drop-ins
+  # with last-assignment-wins, so this overrides it. MUST_HAVE_CHECKSUM is not
+  # optional -- without it cosmovisor would accept an unchecksummed binary from
+  # the plan. See docs/svote-installer-security-analysis.md section 2.11 for what
+  # this grants chain governance.
+  if [ "${allow_binary_autodownload}" = "true" ]; then
+    cat <<EOF >> /etc/systemd/system/svoted.service.d/10-hardening.conf
+Environment=DAEMON_ALLOW_DOWNLOAD_BINARIES=true
+Environment=DAEMON_DOWNLOAD_MUST_HAVE_CHECKSUM=true
 EOF
   fi
 
@@ -722,6 +741,45 @@ EOF
   systemctl daemon-reload
 }
 
+install_upgrade_check_timer() {
+  # A coordinated upgrade has a hard deadline and halts the node if missed, so the
+  # readiness check runs on a timer rather than waiting for someone to log in.
+  # Output lands in journald, which the Ops Agent ships, so an alert policy can key
+  # off it.
+  log "Installing upgrade readiness check timer"
+
+  cat <<EOF > /etc/systemd/system/svote-upgrade-check.service
+[Unit]
+Description=Check readiness for the next Shielded-Vote coordinated upgrade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$APP_USER
+ExecStart=/usr/local/bin/svote upgrade-status
+SyslogIdentifier=svote-upgrade-check
+EOF
+
+  cat <<EOF > /etc/systemd/system/svote-upgrade-check.timer
+[Unit]
+Description=Run the Shielded-Vote upgrade readiness check on a schedule
+
+[Timer]
+OnCalendar=${upgrade_check_on_calendar}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl daemon-reload
+
+  # Safe to enable before the join: upgrade-status degrades gracefully when there
+  # is no validator yet.
+  systemctl enable --now svote-upgrade-check.timer
+}
+
 install_operator_cli() {
   log "Installing /usr/local/bin/svote operator CLI"
 
@@ -862,6 +920,68 @@ warn_if_sslip() {
   vote_validator_tls_domain to a hostname you control, re-apply, re-run the
   startup script, then 'svote register'.
 SSLIP
+}
+
+# ---- coordinated upgrades -------------------------------------------------
+#
+# The scheduled plan is read from the local REST API when svoted is up, and from
+# the seed otherwise -- an unstaged upgrade is exactly the situation where the
+# local node may already be down, so a local-only lookup would go blind when it
+# matters most.
+
+rest_bases() {
+  printf 'http://127.0.0.1:%s\n' "$SVOTE_HELPER_API_PORT"
+  curl -fsSL --max-time 10 "https://voting.valargroup.org/$SVOTE_ENV/dynamic-voting-config.json" 2>/dev/null |
+    jq -r '.vote_servers[]?.url // empty' 2>/dev/null || true
+}
+
+# Print the current upgrade plan as JSON, or nothing.
+upgrade_plan() {
+  local base
+  local out
+  for base in $(rest_bases); do
+    out="$(curl -fsSL --max-time 10 "$${base%/}/cosmos/upgrade/v1beta1/current_plan" 2>/dev/null || true)"
+    if [ -n "$out" ] && [ "$(echo "$out" | jq -r '.plan // empty' 2>/dev/null)" != "" ]; then
+      echo "$out" | jq -c '.plan'
+      return 0
+    fi
+  done
+}
+
+current_height() {
+  local base
+  local out
+  for base in $(rest_bases); do
+    out="$(curl -fsSL --max-time 10 "$${base%/}/cosmos/base/tendermint/v1beta1/blocks/latest" 2>/dev/null || true)"
+    out="$(echo "$out" | jq -r '.block.header.height // empty' 2>/dev/null || true)"
+    if [ -n "$out" ]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  done
+}
+
+installed_version() {
+  "$SVOTE_HOME/cosmovisor/genesis/bin/svoted" version 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# Same rule as svote-stage-upgrades: same major and minor, patch not older.
+version_satisfies() {
+  local inst="$${1#v}"
+  local req="$${2#v}"
+  local i_ma i_mi i_pa r_ma r_mi r_pa
+
+  [ -n "$req" ] || return 1
+  IFS=. read -r i_ma i_mi i_pa <<<"$inst"
+  IFS=. read -r r_ma r_mi r_pa <<<"$req"
+  [ "$${i_ma:-x}" = "$${r_ma:-y}" ] &&
+    [ "$${i_mi:-x}" = "$${r_mi:-y}" ] &&
+    [ "$${i_pa:-0}" -ge "$${r_pa:-0}" ] 2>/dev/null
+}
+
+autodownload_enabled() {
+  as_root systemctl show svoted -p Environment 2>/dev/null |
+    tr ' ' '\n' | grep -q '^DAEMON_ALLOW_DOWNLOAD_BINARIES=true$'
 }
 
 # Admin API base. Empty means derive it from the chain id, matching
@@ -1176,6 +1296,101 @@ Confirm with the voting admin that the queue shows this URL and any earlier one 
 PR
 }
 
+# Report readiness for the next coordinated upgrade. Also the timer's ExecStart,
+# so the exit code is meaningful: non-zero means a human needs to act.
+cmd_upgrade_status() {
+  local plan name height required binaries staged_bin staged_ver installed
+  local head remaining eta_days verdict=READY rc=0
+
+  # The timer is enabled at provisioning time, before any validator exists.
+  if ! joined; then
+    echo "No validator on this host yet; nothing to check."
+    rm -f "$SVOTE_UPGRADE_MARKER" 2>/dev/null || true
+    return 0
+  fi
+
+  installed="$(installed_version)"
+  echo "Installed:  $${installed:-<unknown>}  ($SVOTE_HOME/cosmovisor/genesis/bin/svoted)"
+
+  if autodownload_enabled; then
+    echo "Autodownload: enabled (checksum required)"
+  else
+    echo "Autodownload: disabled -- pre-staging is the only path"
+  fi
+
+  plan="$(upgrade_plan)"
+  if [ -z "$plan" ]; then
+    echo "Plan:       none scheduled on chain"
+    echo ""
+    echo "Verdict:    READY (nothing pending)"
+    return 0
+  fi
+
+  name="$(echo "$plan" | jq -r '.name // empty')"
+  height="$(echo "$plan" | jq -r '.height // empty')"
+  required="$(echo "$plan" | jq -r '(.info // "") | (fromjson? // {}) | .tag // empty')"
+  if [ "$(echo "$plan" | jq -r '(.info // "") | (fromjson? // {}) | (.binaries // empty) | length' 2>/dev/null || true)" -gt 0 ] 2>/dev/null; then
+    binaries=yes
+  else
+    binaries=no
+  fi
+
+  echo "Plan:       $name at height $height"
+  echo "Requires:   $${required:-<unknown>}   downloadable: $binaries"
+
+  head="$(current_height)"
+  if [ -n "$head" ] && [ -n "$height" ]; then
+    remaining=$((height - head))
+    if [ "$remaining" -gt 0 ]; then
+      # ~1.386 s/block per the plan's own averaging window.
+      eta_days="$(awk -v b="$remaining" 'BEGIN{printf "%.1f", b*1.386/86400}')"
+      echo "Head:       $head  ($remaining blocks to go, ~$eta_days days)"
+    else
+      echo "Head:       $head  (upgrade height reached)"
+    fi
+  fi
+
+  staged_bin="$SVOTE_HOME/cosmovisor/upgrades/$name/bin/svoted"
+  if [ -x "$staged_bin" ]; then
+    staged_ver="$("$staged_bin" version 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -z "$required" ] || [ "$staged_ver" = "$required" ]; then
+      echo "Staged:     yes  ($staged_ver)"
+    else
+      echo "Staged:     yes but version mismatch ($staged_ver, expected $required)"
+      verdict="ACTION NEEDED"
+      rc=1
+    fi
+  elif version_satisfies "$installed" "$required"; then
+    # svote-stage-upgrades will handle this one at next start.
+    echo "Staged:     not yet, but the installed binary satisfies $required"
+  elif [ "$binaries" = "yes" ] && autodownload_enabled; then
+    echo "Staged:     no -- cosmovisor can download it, but pre-staging is safer"
+    verdict="NOT STAGED"
+  else
+    echo "Staged:     NO, and it cannot be downloaded"
+    verdict="ACTION NEEDED"
+    rc=1
+  fi
+
+  echo ""
+  echo "Verdict:    $verdict"
+  if [ "$verdict" != "READY" ]; then
+    echo "Fix:        svote prestage-upgrade"
+  fi
+
+  # Marker drives the login banner, so it does not have to query the chain. Keyed
+  # on the verdict, not the exit code: NOT STAGED exits 0 because autodownload will
+  # probably carry it, but pre-staging is still the intended path, so it should
+  # keep nagging.
+  if [ "$verdict" = "READY" ]; then
+    rm -f "$SVOTE_UPGRADE_MARKER" 2>/dev/null || true
+  else
+    touch "$SVOTE_UPGRADE_MARKER" 2>/dev/null || true
+  fi
+
+  return "$rc"
+}
+
 cmd_tls_status() {
   local mine
   local cert
@@ -1298,30 +1513,51 @@ cmd_reset_snapshot() {
 }
 
 cmd_prestage_upgrade() {
-  # Plan name and tag are separate arguments because they genuinely differ: the
-  # live chain records an upgrade named 'v1' whose binary tag is v1.0.0. Defaulting
-  # the tag to the plan name is only right when a release is named after its plan.
+  # Plan name and tag are separate because they genuinely differ: the chain records
+  # an applied upgrade named 'v1' whose binary tag is v1.0.0. With no arguments both
+  # are discovered from the scheduled plan, which is the normal case.
   local plan="$${1:-}"
-  local tag="$${2:-$${1:-}}"
-
-  if [ -z "$plan" ]; then
-    die "usage: svote prestage-upgrade <plan-name> [release-tag]
-
-  <plan-name>   the on-chain upgrade plan name, e.g. v1
-  [release-tag] the binary tag to stage, defaults to <plan-name>
-
-  The current plan name and its required tag are in:
-    jq '{name, height, tag: (.info | fromjson.tag)}' $SVOTE_HOME/data/upgrade-info.json"
-  fi
+  local tag="$${2:-}"
+  local plan_json
+  local updater
 
   require_joined
 
+  if [ -z "$plan" ]; then
+    plan_json="$(upgrade_plan)"
+    [ -n "$plan_json" ] ||
+      die "no upgrade plan scheduled on chain, and no plan name given.
+  usage: svote prestage-upgrade [plan-name] [release-tag]"
+    plan="$(echo "$plan_json" | jq -r '.name // empty')"
+    tag="$(echo "$plan_json" | jq -r '(.info // "") | (fromjson? // {}) | .tag // empty')"
+    echo "Discovered scheduled plan '$plan' requiring tag '$tag'."
+  fi
+
+  tag="$${tag:-$plan}"
+  [ -n "$plan" ] || die "could not determine the upgrade plan name"
+
+  updater="https://shielded-vote.nyc3.digitaloceanspaces.com/scripts/upgrade/$tag/update_chain.sh"
+
   echo "Pre-staging tag $tag for upgrade plan $plan."
-  echo "This does not enable cosmovisor auto-download: leaving"
-  echo "DAEMON_ALLOW_DOWNLOAD_BINARIES=false keeps chain governance from being able"
-  echo "to run arbitrary binaries on this host."
-  curl -fsSL "https://shielded-vote.nyc3.digitaloceanspaces.com/scripts/upgrade/$tag/update_chain.sh" |
+  echo "This does not stop the validator."
+  curl -fsSL "$updater" |
     as_root bash -s -- --mode prepare --plan-name "$plan" --tag "$tag"
+
+  echo ""
+  echo "=== Verifying ==="
+  # --skip-cosmovisor-service is required and correct here. verify-prestage
+  # otherwise asserts that the unit's ExecStart *is* the cosmovisor binary, which
+  # only holds after `update_chain.sh --mode migrate`. This module keeps the
+  # wrapper-based unit that join.sh installs -- cosmovisor still performs the
+  # switch, as a child of the wrapper. Do not "fix" this by migrating: migrate
+  # rewrites the unit and removes conflicting drop-ins, which would delete
+  # 10-hardening.conf and with it the ExecStart interpreter fix.
+  curl -fsSL "$updater" |
+    as_root bash -s -- --mode verify-prestage --plan-name "$plan" --tag "$tag" \
+      --skip-cosmovisor-service
+
+  echo ""
+  cmd_upgrade_status || true
 }
 
 cmd_remove() {
@@ -1344,6 +1580,7 @@ svote — operate a Valar Group Shielded-Vote validator
   svote register [--force]    Re-send the signed registration with the current
                               public URL (use after changing the hostname)
   svote tls-status            Domain, DNS, certificate and public reachability
+  svote upgrade-status        Readiness for the next coordinated upgrade
   svote status                Sync status
   svote bonded                On-chain bonding status
   svote logs                  Follow svoted logs
@@ -1366,7 +1603,7 @@ subcommand="$${1:-help}"
 # Subcommands that read or write the validator home run as the app user. Re-exec
 # with the original argv intact before consuming it below.
 case "$subcommand" in
-  join|addr|register|tls-status|status|bonded|backup-keys|reset-snapshot|prestage-upgrade|remove)
+  join|addr|register|tls-status|upgrade-status|status|bonded|backup-keys|reset-snapshot|prestage-upgrade|remove)
     reexec_as_app_user "$@"
     ;;
 esac
@@ -1380,6 +1617,7 @@ case "$subcommand" in
   addr)              cmd_addr ;;
   register)          cmd_register "$@" ;;
   tls-status)        cmd_tls_status ;;
+  upgrade-status)    cmd_upgrade_status ;;
   status)            cmd_status ;;
   bonded)            cmd_bonded ;;
   backup-keys)       backup_keys ;;
@@ -1435,6 +1673,13 @@ elif ! systemctl is-enabled --quiet svote-backup-keys.timer 2>/dev/null; then
   printf '\n  WARNING: scheduled key backups are not enabled. Run: svote backup-keys\n'
 else
   printf 'Backups: %s\n' "$(systemctl show -p ActiveState --value svote-backup-keys.timer 2>/dev/null)"
+fi
+
+# Pending coordinated upgrade. Reads the marker the timer leaves rather than
+# querying the chain, so login stays fast.
+if [ -n "$${SVOTE_UPGRADE_MARKER:-}" ] && [ -f "$SVOTE_UPGRADE_MARKER" ]; then
+  printf '\n  WARNING: a coordinated upgrade is scheduled and this node is not ready.\n'
+  printf '           The validator will halt at the upgrade height. Run: svote upgrade-status\n'
 fi
 
 printf 'Help:    svote help\n\n'
@@ -1528,6 +1773,7 @@ main() {
   install_key_backup
   install_snapshot_tooling
   install_operator_cli
+  install_upgrade_check_timer
   install_login_banner
   print_next_steps
 
