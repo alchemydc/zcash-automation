@@ -210,6 +210,8 @@ replicas = {
 
 Zebra and z3 node types are enabled per-deployment by setting `replicas` inside the corresponding entry of the `zebrad_archivenode_deployments`, `zebra_testing_deployments`, or `z3_deployments` maps (see [variables.tf](./variables.tf) for the full schemas and defaults).
 
+The vote validator is enabled with `vote_validator_enabled = true`.
+
 A decription of each of the different types of infrastructure available follows:
 
 * zcashd-archivenode: a [Zcashd](https://github.com/zcash/zcash) full node, which advertises its (natted) public IP to the p2p network and accepts incoming connections from other nodes on the Zcash network on tcp/8223.  The zcashd-archivenode also stops zcashd at regularly scheduled intervals in order to backup the chaindata (26GB as of July 2021) to a snapshot, via rsync, and also as a .tgz to GCS.
@@ -218,6 +220,7 @@ A decription of each of the different types of infrastructure available follows:
 * zebrad-archivenode: a [Zebrad](https://github.com/ZcashFoundation/zebra) full node which installs the official checksum-verified release binary from GitHub releases (pinned via `zebra_release_tag`, defaulting to the latest release), configures Zebra primarily via `ZEBRA_*` environment variables, stores chain state on a persistent disk, and snapshots that disk on a systemd timer.
 * zebra-testing: a Zebra test node intended for branch and PR validation. It installs the official release binary by default, or builds Zebra from a configurable git repo/ref when one is set. It restores its state disk from a snapshot, but does not create recurring snapshots of its own.
 * z3: a Docker-based [Z3](https://github.com/zcashfoundation/z3) host that installs Docker Engine, clones the z3 repo, installs `rage`, mounts a dedicated persistent disk for Zebra chain data, pulls the pinned container images, and starts Zebra first so it can complete its initial sync before the rest of the stack is brought up. If a matching archivenode-produced snapshot exists for its network, the Zebra data disk is restored from it. A Rust toolchain for the `z3` app user (only needed for the opt-in source-build overlay) can be enabled globally via `z3_install_rust_toolchain` or per-deployment via `install_rust_toolchain`.
+* zcash-vote-validator: a host for a validator on Valar Group's [Shielded-Vote](https://setup.valargroup.org/) chain (`zvote-1`). Unlike the other modules this one deliberately stops short of running the application: it prepares the host (120 GB data disk mounted as the `svote` user's home, `rage`, systemd hardening staged ahead of the unit, public HTTPS + P2P ingress) and the operator then runs Valar Group's installer once, interactively, via `svote join`. Everything either side of that step is automated, including age-encrypted backup of the validator signing key to a write-only GCS bucket and daily labelled snapshots of the data disk. See [the module README](./modules/zcash-vote-validator/README.md) and [docs/svote-installer-security-analysis.md](../../docs/svote-installer-security-analysis.md).
 
 
 ## Warning

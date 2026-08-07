@@ -24,6 +24,12 @@ locals {
     Mainnet = 8233
     Testnet = 18233
   }
+
+  vote_validator_count = var.vote_validator_enabled ? 1 : 0
+
+  # Derived as a plain string rather than read off the bucket resource, so the
+  # module can be handed the name without indexing into a counted resource.
+  svote_keys_bucket_name = "${var.project}-svote-keys"
 }
 
 resource "google_project_service" "compute" {
@@ -194,6 +200,74 @@ resource "google_compute_firewall" "z3" {
   allow {
     protocol = "tcp"
     ports    = [local.z3_p2p_ports[each.value.network]]
+  }
+}
+
+# The vote validator firewall rules all follow vote_validator_enabled. Two of
+# them open ports to the whole internet, so they should not exist while no
+# validator is deployed.
+#
+# Only allow SSH to the vote validator through IAP TCP forwarding by default.
+resource "google_compute_firewall" "sshd_vote_validator_iap" {
+  count      = local.vote_validator_count
+  name       = "sshd-vote-validator-iap-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zcash-vote-validator"]
+  source_ranges = ["35.235.240.0/20"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+resource "google_compute_firewall" "sshd_vote_validator_public" {
+  count      = var.vote_validator_enabled && length(var.vote_validator_ssh_source_ranges) > 0 ? 1 : 0
+  name       = "sshd-vote-validator-public-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zcash-vote-validator"]
+  source_ranges = var.vote_validator_ssh_source_ranges
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+# The vote validator's helper API has to be publicly reachable over HTTPS before
+# the chain considers it client-ready, and Let's Encrypt needs :80 to issue the
+# certificate Caddy serves on :443.
+resource "google_compute_firewall" "vote_validator_https" {
+  count      = local.vote_validator_count
+  name       = "vote-validator-https-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zcash-vote-validator"]
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80", "443"]
+  }
+}
+
+resource "google_compute_firewall" "vote_validator_p2p" {
+  count      = local.vote_validator_count
+  name       = "vote-validator-p2p-firewall"
+  network    = google_compute_network.zcash_network.self_link
+  depends_on = [google_compute_network.zcash_network]
+
+  target_tags   = ["zcash-vote-validator"]
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [tostring(var.vote_validator_p2p_port)]
   }
 }
 
@@ -382,6 +456,103 @@ module "z3" {
   depends_on                  = [google_compute_network.zcash_network]
 }
 
+module "zcash-vote-validator" {
+  count  = var.vote_validator_enabled ? 1 : 0
+  source = "./modules/zcash-vote-validator"
+
+  project                     = var.project
+  network_name                = var.network_name
+  service_account_scopes      = var.service_account_scopes
+  region                      = var.region
+  zone                        = var.zone
+  GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
+  subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
+  os_image                    = var.os_image
+  hostname_prefix             = var.vote_validator_hostname_prefix
+  instance_type               = var.vote_validator_instance_type
+  instance_count              = var.vote_validator_instance_count
+  boot_disk_size              = var.vote_validator_boot_disk_size
+  data_disk_name              = "svote-data"
+  data_disk_size              = var.vote_validator_data_disk_size
+  data_disk_type              = var.vote_validator_data_disk_type
+  data_disk_snapshot          = var.vote_validator_data_disk_snapshot
+  svote_env                   = var.vote_validator_svote_env
+  upgrade_mode                = var.vote_validator_upgrade_mode
+  tls_domain                  = var.vote_validator_tls_domain
+  p2p_port                    = var.vote_validator_p2p_port
+  join_script_sha256          = var.vote_validator_join_script_sha256
+  svote_admin_url             = var.vote_validator_svote_admin_url
+  moniker                     = var.vote_validator_moniker
+  join_timeout_seconds        = var.vote_validator_join_timeout_seconds
+  allow_binary_autodownload   = var.vote_validator_allow_binary_autodownload
+  upgrade_check_on_calendar   = var.vote_validator_upgrade_check_on_calendar
+  key_backup_bucket           = local.svote_keys_bucket_name
+  key_backup_age_recipient    = var.vote_validator_key_backup_age_recipient
+  key_backup_on_calendar      = var.vote_validator_key_backup_on_calendar
+  snapshot_on_calendar        = var.vote_validator_snapshot_on_calendar
+  snapshot_retention_count    = var.vote_validator_snapshot_retention_count
+
+  labels = {
+    role  = "vote-validator"
+    stack = "zcash-vote"
+  }
+
+  depends_on = [
+    google_compute_network.zcash_network,
+    google_storage_bucket_iam_binding.svote_keys_binding_write,
+  ]
+}
+
+# Encrypted validator key archives. Kept outside the module so the bucket and its
+# object history survive `tofu destroy` of the instance, which is the whole point
+# of the backup.
+#
+# Gating it on vote_validator_enabled would otherwise mean that flipping the flag
+# back to false plans to DELETE this bucket and every validator key archive in
+# it. prevent_destroy turns that into a hard plan error instead of silent data
+# loss: decommissioning a validator has to be a deliberate act, not a side effect
+# of toggling a boolean. To actually remove it, take a final backup, verify you
+# can decrypt it off-host, then drop this lifecycle block or
+# `tofu state rm google_storage_bucket.svote_keys_bucket[0]`.
+resource "google_storage_bucket" "svote_keys_bucket" {
+  count    = local.vote_validator_count
+  name     = local.svote_keys_bucket_name
+  location = "US"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  uniform_bucket_level_access = true
+
+  lifecycle_rule {
+    condition {
+      num_newer_versions = 20
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  versioning {
+    enabled = true
+  }
+}
+
+# objectCreator only, deliberately: the instance needs to write backups but has
+# no business reading its own backup history back, and the archives are encrypted
+# to an age recipient it does not hold the identity for either.
+resource "google_storage_bucket_iam_binding" "svote_keys_binding_write" {
+  count  = local.vote_validator_count
+  bucket = local.svote_keys_bucket_name
+  role   = "roles/storage.objectCreator"
+  members = [
+    "serviceAccount:${var.GCP_DEFAULT_SERVICE_ACCOUNT}",
+  ]
+
+  depends_on = [google_storage_bucket.svote_keys_bucket]
+}
+
 resource "google_storage_bucket" "chaindata_bucket" {
   name     = "${var.project}-chaindata"
   location = "US"
@@ -522,6 +693,75 @@ EOT
 
   # Updated regex to match height in zcashd logs with ANSI codes
   value_extractor = "REGEXP_EXTRACT(jsonPayload.message, \"height.*?#033\\\\[3m#033\\\\[2m=#033\\\\[0m([0-9]+)\")"
+
+  label_extractors = {
+    instance_id = "EXTRACT(resource.labels.instance_id)"
+  }
+}
+
+# svoted logs via journald with SyslogIdentifier=svoted, which rsyslog forwards
+# into /var/log/syslog, which is what the Ops Agent ships. CometBFT emits one
+# "committed state ... height=N" line per block.
+resource "google_logging_metric" "TF_svote_block_height_distribution" {
+  count  = local.vote_validator_count
+  name   = "TF_svote_block_height_distribution"
+  filter = <<EOT
+logName="projects/${var.project}/logs/syslog"
+resource.type="gce_instance"
+jsonPayload.message=~"(?i)committed state.*height="
+EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "DISTRIBUTION"
+    unit         = "1"
+    display_name = "TF Shielded-Vote Validator Block Height Distribution"
+
+    labels {
+      key        = "instance_id"
+      value_type = "STRING"
+    }
+  }
+
+  bucket_options {
+    linear_buckets {
+      num_finite_buckets = 10
+      width              = 500000
+      offset             = 0
+    }
+  }
+
+  value_extractor = "REGEXP_EXTRACT(jsonPayload.message, \"height=([0-9]+)\")"
+
+  label_extractors = {
+    instance_id = "EXTRACT(resource.labels.instance_id)"
+  }
+}
+
+# svote-upgrade-check.timer runs `svote upgrade-status` daily and logs its verdict
+# under the svote-upgrade-check identifier. A coordinated upgrade halts the node if
+# it is missed, so this counter exists to hang an alert policy off. There are no
+# alert policies in this configuration yet; the metric is the prerequisite.
+resource "google_logging_metric" "TF_svote_upgrade_action_needed" {
+  count  = local.vote_validator_count
+  name   = "TF_svote_upgrade_action_needed"
+  filter = <<EOT
+logName="projects/${var.project}/logs/syslog"
+resource.type="gce_instance"
+jsonPayload.message=~"Verdict:\\s+(ACTION NEEDED|NOT STAGED)"
+EOT
+
+  metric_descriptor {
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "TF Shielded-Vote Validator Upgrade Action Needed"
+
+    labels {
+      key        = "instance_id"
+      value_type = "STRING"
+    }
+  }
 
   label_extractors = {
     instance_id = "EXTRACT(resource.labels.instance_id)"
