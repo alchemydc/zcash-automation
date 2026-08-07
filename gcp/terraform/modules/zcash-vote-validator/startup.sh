@@ -549,10 +549,18 @@ access_token() {
 
 GCS_TOKEN=""
 
+# Every object written here must have a name that does not already exist. The
+# instance holds roles/storage.objectCreator and nothing more, which permits
+# creating objects but not overwriting them -- an overwrite needs
+# storage.objects.delete, because archiving the live version is a delete even
+# with versioning on. That is the point: a compromised validator can add backups
+# but cannot rewrite or destroy its own backup history. So: no "latest" object,
+# only timestamped ones.
 upload() {
   local file="$1"
   local object="$2"
   local encoded
+  local code
 
   if [ -z "$GCS_TOKEN" ]; then
     GCS_TOKEN="$(access_token)"
@@ -561,12 +569,27 @@ upload() {
   # Object names are sent as a query parameter, so path separators must be escaped.
   encoded="$(printf '%s' "$object" | sed 's|/|%2F|g')"
 
-  curl -fsS -X POST \
+  # Note for editors: this file is a templatefile() template, so a literal %%{
+  # must be written doubled. Unescaped, Terraform reads it as a template
+  # directive and the plan fails.
+  code="$(curl -sS -o /dev/null -w '%%{http_code}' -X POST \
     -H "Authorization: Bearer $GCS_TOKEN" \
     -H "Content-Type: application/octet-stream" \
     --data-binary "@$file" \
     "https://storage.googleapis.com/upload/storage/v1/b/$SVOTE_KEY_BACKUP_BUCKET/o?uploadType=media&name=$encoded" \
-    >/dev/null
+    2>/dev/null || true)"
+
+  case "$code" in
+    2*)
+      log "uploaded $object"
+      ;;
+    403)
+      fail "HTTP 403 uploading $object. The instance service account needs roles/storage.objectCreator on $SVOTE_KEY_BACKUP_BUCKET. Note that objectCreator cannot overwrite an existing object, so this also happens if $object already exists."
+      ;;
+    *)
+      fail "HTTP $${code:-000} uploading $object to $SVOTE_KEY_BACKUP_BUCKET"
+      ;;
+  esac
 }
 
 work_dir="$(mktemp -d)"
@@ -607,8 +630,6 @@ log "Encrypted archive is $(stat -c %s "$archive") bytes, sha256 $(cat "$digest_
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 upload "$archive" "$SVOTE_HOSTNAME/keys-$stamp.tar.age"
 upload "$digest_file" "$SVOTE_HOSTNAME/keys-$stamp.tar.age.sha256"
-upload "$archive" "$SVOTE_HOSTNAME/latest.tar.age"
-upload "$digest_file" "$SVOTE_HOSTNAME/latest.tar.age.sha256"
 
 touch "$SVOTE_KEY_BACKUP_MARKER"
 
@@ -1500,13 +1521,21 @@ identity is held off-host by the operator.
   Restoring onto a second host while the original still runs will double-sign.
   Destroy or permanently stop the original first.
 
+Backups are timestamped, never overwritten -- the instance can create objects but
+not replace them, so its backup history cannot be rewritten from the host.
+
 From a workstation that holds the age identity:
 
-  gsutil cp gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/latest.tar.age .
-  gsutil cat gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME/latest.tar.age.sha256
-  sha256sum latest.tar.age        # must match the line above
-  rage -d -i /path/to/identity.txt latest.tar.age | tar -tzf -   # inspect
-  rage -d -i /path/to/identity.txt latest.tar.age | tar -xzf -   # extract
+  BUCKET=gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME
+  gsutil ls "\$BUCKET/keys-*.tar.age" | sort | tail -1      # newest backup
+  NEWEST=\$(gsutil ls "\$BUCKET/keys-*.tar.age" | sort | tail -1)
+
+  gsutil cp "\$NEWEST" .
+  gsutil cat "\$NEWEST.sha256"
+  sha256sum "\$(basename "\$NEWEST")"      # must match the line above
+
+  rage -d -i /path/to/identity.txt "\$(basename "\$NEWEST")" | tar -tzf -   # inspect
+  rage -d -i /path/to/identity.txt "\$(basename "\$NEWEST")" | tar -xzf -   # extract
 
 Then, on the replacement host, with svoted stopped:
 

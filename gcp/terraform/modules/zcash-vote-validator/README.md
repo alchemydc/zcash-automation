@@ -232,8 +232,16 @@ This module automates it:
 - `svote-backup-keys` tars `config/priv_validator_key.json`,
   `config/node_key.json`, `keyring-test/` and any `pallas.*` / `ea.*`, pipes it
   through `rage -r <recipient>`, and uploads to
-  `gs://<project>-svote-keys/<instance>/` as a timestamped object plus
-  `latest.tar.age`, each with a `.sha256` sidecar.
+  `gs://<project>-svote-keys/<instance>/keys-<UTC-timestamp>.tar.age` with a
+  `.sha256` sidecar.
+- **Every object name is unique; nothing is ever overwritten.** The instance holds
+  `roles/storage.objectCreator` and nothing else, which permits creating objects
+  but not replacing them — an overwrite needs `storage.objects.delete`, because
+  archiving the live version counts as a delete even with versioning on. That is
+  the property worth having on the bucket holding the signing key: a compromised
+  validator can add backups but cannot rewrite or destroy its own history. It is
+  also why there is no `latest.tar.age`; `svote restore-keys` lists and takes the
+  newest.
 - The bucket is versioned and keeps 20 non-current versions. The instance's
   service account holds **`objectCreator` only**, so a compromised validator can
   write backups but cannot read its own backup history — and could not decrypt it
