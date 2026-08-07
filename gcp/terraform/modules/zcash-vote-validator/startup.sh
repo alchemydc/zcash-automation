@@ -28,11 +28,36 @@ ensure_user() {
   fi
 }
 
+# apt on a freshly booted GCE instance competes with apt-daily and
+# unattended-upgrades, and a stalled mirror connection will otherwise hang
+# indefinitely while holding the dpkg frontend lock. DPkg::Lock::Timeout makes
+# lock waits bounded and graceful (apt >= 1.9, so Debian 11+); the Acquire
+# options make a wedged mirror fail and retry instead of hanging forever.
+apt_get() {
+  apt-get \
+    -o DPkg::Lock::Timeout=600 \
+    -o Acquire::Retries=3 \
+    -o Acquire::http::Timeout=30 \
+    -o Acquire::https::Timeout=30 \
+    "$@"
+}
+
 install_base_packages() {
   log "Installing base packages"
-  apt-get update
-  apt-get install -y \
+  apt_get update
+
+  # caddy is installed here, at provisioning time, rather than left to the
+  # installer. join.sh only installs Caddy when `command -v caddy` fails, and its
+  # path adds the cloudsmith apt repo via two curls with no timeout plus a
+  # `gpg --dearmor` that prompts if the keyring already exists -- all during the
+  # join, where a stall blocks the operator with apt's output hidden. Debian 13
+  # ships caddy 2.6.2 in main, which is ample for `reverse_proxy` plus ACME, so
+  # installing it up front makes that whole block a no-op.
+  #
+  # For a newer Caddy, trixie-backports has 2.11.x.
+  apt_get install -y \
     ca-certificates \
+    caddy \
     curl \
     htop \
     jq \
@@ -143,7 +168,7 @@ ensure_rage() {
   fi
 
   curl -fsSL "$rage_asset_url" -o "$rage_package_path"
-  apt-get install -y "$rage_package_path"
+  apt_get install -y "$rage_package_path"
   rm -f "$rage_package_path"
 }
 
