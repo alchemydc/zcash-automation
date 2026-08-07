@@ -134,8 +134,10 @@ attached. The login banner nags while a pending upgrade is unresolved.
 ### Preparing
 
 ```bash
-svote prestage-upgrade          # discovers plan name and tag from the chain
+svote prestage-upgrade
 ```
+
+With no arguments it discovers the plan name and tag from the chain.
 
 This runs upstream's `update_chain.sh --mode prepare`, which downloads and stages
 the new binary at `cosmovisor/upgrades/<plan>/bin/svoted` **without stopping the

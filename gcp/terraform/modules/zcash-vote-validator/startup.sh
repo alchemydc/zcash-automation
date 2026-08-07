@@ -1524,18 +1524,30 @@ identity is held off-host by the operator.
 Backups are timestamped, never overwritten -- the instance can create objects but
 not replace them, so its backup history cannot be rewritten from the host.
 
-From a workstation that holds the age identity:
+From a workstation that holds the age identity. Every line below is pasteable as
+is -- no trailing comments, because zsh does not treat # as a comment
+interactively and would pass it to the command as an argument.
+
+1. Locate and fetch the newest backup:
 
   BUCKET=gs://$SVOTE_KEY_BACKUP_BUCKET/$SVOTE_HOSTNAME
-  gsutil ls "\$BUCKET/keys-*.tar.age" | sort | tail -1      # newest backup
   NEWEST=\$(gsutil ls "\$BUCKET/keys-*.tar.age" | sort | tail -1)
-
+  ARCHIVE=\$(basename "\$NEWEST")
+  echo "\$NEWEST"
   gsutil cp "\$NEWEST" .
-  gsutil cat "\$NEWEST.sha256"
-  sha256sum "\$(basename "\$NEWEST")"      # must match the line above
 
-  rage -d -i /path/to/identity.txt "\$(basename "\$NEWEST")" | tar -tzf -   # inspect
-  rage -d -i /path/to/identity.txt "\$(basename "\$NEWEST")" | tar -xzf -   # extract
+2. Verify integrity. The two digests must match:
+
+  gsutil cat "\$NEWEST.sha256"
+  sha256sum "\$ARCHIVE"
+
+3. Inspect the contents without extracting:
+
+  rage -d -i /path/to/identity.txt "\$ARCHIVE" | tar -tzf -
+
+4. Extract:
+
+  rage -d -i /path/to/identity.txt "\$ARCHIVE" | tar -xzf -
 
 Then, on the replacement host, with svoted stopped:
 

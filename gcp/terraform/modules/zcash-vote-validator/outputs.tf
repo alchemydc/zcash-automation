@@ -79,8 +79,10 @@ output "post_deployment_instructions" {
     1. Confirm a key backup recipient is configured. If key_backup_age_recipient
        is empty, key backup refuses to run. Generate one off-host:
 
-         rage-keygen -o svote-backup-identity.txt   # keep this OFF the VM
-         # set the public "age1..." line as key_backup_age_recipient, re-apply
+         rage-keygen -o svote-backup-identity.txt
+
+       Keep that identity file OFF the VM and backed up. Set the public
+       "age1..." line it prints as key_backup_age_recipient, then re-apply.
 
     2. Join, interactively. See the join_commands output for the exact
        copy-pasteable command per instance, or:
