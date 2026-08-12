@@ -58,8 +58,13 @@ resource "google_compute_instance" "zebra_testing" {
     startup-script = templatefile(
       format("%s/startup.sh", path.module),
       {
+        cargo_build_args       = var.cargo_build_args,
+        cargo_build_features   = var.cargo_build_features,
         data_disk_name         = google_compute_disk.zebra_state[count.index].name,
         enable_snapshot_timer  = var.enable_snapshot_timer,
+        fuzz_build             = var.fuzz_build,
+        fuzz_build_args        = var.fuzz_build_args,
+        fuzz_dir               = var.fuzz_dir,
         gcloud_project         = var.project,
         gcloud_zone            = var.zone,
         health_listen_addr     = var.health_listen_addr,

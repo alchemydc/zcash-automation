@@ -202,6 +202,21 @@ variable "zebra_testing_deployments" {
     zebra_repo_url      = optional(string, "https://github.com/ZcashFoundation/zebra")
     zebra_repo_ref      = optional(string, "")
     zebra_git_fetch_ref = optional(string, "")
+
+    # Per-deployment sizing. Null falls back to the global defaults, so existing
+    # deployments are unaffected. A source build that compiles the full feature
+    # set or the fuzz harnesses needs both a larger machine and a much larger
+    # boot disk, since the checkout and its target/ directory live on the boot
+    # disk, not on the persistent state disk.
+    instance_type  = optional(string, null)
+    boot_disk_size = optional(number, null)
+
+    # Source-build knobs. Ignored in release-binary mode.
+    cargo_build_features = optional(string, "prometheus")
+    cargo_build_args     = optional(string, "")
+    fuzz_build           = optional(bool, false)
+    fuzz_build_args      = optional(string, "")
+    fuzz_dir             = optional(string, "zebra-fuzz/fuzz")
   }))
   default = {}
 }

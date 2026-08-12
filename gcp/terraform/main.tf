@@ -391,8 +391,8 @@ module "zebra-testing" {
   data_disk_snapshot          = each.value.data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
   instance_count              = each.value.replicas
-  instance_type               = var.zebra_testing_instance_type
-  boot_disk_size              = var.boot_disk_size
+  instance_type               = coalesce(each.value.instance_type, var.zebra_testing_instance_type)
+  boot_disk_size              = coalesce(each.value.boot_disk_size, var.boot_disk_size)
   hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image
@@ -400,6 +400,11 @@ module "zebra-testing" {
   zebra_repo_url              = each.value.zebra_repo_url
   zebra_repo_ref              = each.value.zebra_repo_ref
   zebra_git_fetch_ref         = each.value.zebra_git_fetch_ref
+  cargo_build_features        = each.value.cargo_build_features
+  cargo_build_args            = each.value.cargo_build_args
+  fuzz_build                  = each.value.fuzz_build
+  fuzz_build_args             = each.value.fuzz_build_args
+  fuzz_dir                    = each.value.fuzz_dir
   zebra_network               = each.value.network
   zebra_listen_addr           = format("0.0.0.0:%d", lookup(local.zebra_p2p_ports, each.value.network, var.zebra_p2p_port))
   zebra_state_mount_path      = var.zebra_state_mount_path

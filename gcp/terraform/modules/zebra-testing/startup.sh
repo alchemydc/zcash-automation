@@ -14,7 +14,12 @@ ZEBRAD_BIN="/usr/local/bin/zebrad"
 BASE_STATE_DIR="/var/lib/${module_role}"
 BASE_MARKER_PATH="$BASE_STATE_DIR/base-provisioned"
 RELEASE_MARKER_PATH="$BASE_STATE_DIR/zebrad-release"
+# Records the rev of the last cargo build that completed, whether or not it
+# produced a zebrad binary. Lives on the boot disk alongside /opt/zebra/target,
+# so the marker and the build artifacts it describes share a lifetime.
+BUILD_MARKER_PATH="$BASE_STATE_DIR/source-build"
 TOOLCHAIN_MARKER_PATH="$BASE_STATE_DIR/build-toolchain-provisioned"
+FUZZ_TOOLCHAIN_MARKER_PATH="$BASE_STATE_DIR/fuzz-toolchain-provisioned"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
 STATE_MOUNT_PATH="${zebra_state_mount_path}"
 
@@ -153,6 +158,26 @@ ensure_build_toolchain() {
 
     mkdir -p "$BASE_STATE_DIR"
     touch "$TOOLCHAIN_MARKER_PATH"
+}
+
+# cargo-fuzz needs a nightly rustc for -Zsanitizer, so the harnesses are always
+# built with `cargo +nightly`. The zebrad build stays on the stable default.
+ensure_fuzz_toolchain() {
+    if [ -f "$FUZZ_TOOLCHAIN_MARKER_PATH" ]; then
+        return
+    fi
+
+    log "Installing nightly toolchain and cargo-fuzz for $APP_USER"
+
+    # --profile minimal: rustc, cargo and rust-std only. rust-std carries the
+    # sanitizer runtimes cargo-fuzz needs, and the stable toolchain already
+    # provides rustfmt and clippy, so the nightly docs/components are dead weight
+    # on a box whose boot disk is already sized for a large target/ tree.
+    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && rustup toolchain install nightly --profile minimal'
+    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && cargo install cargo-fuzz --locked'
+
+    mkdir -p "$BASE_STATE_DIR"
+    touch "$FUZZ_TOOLCHAIN_MARKER_PATH"
 }
 
 ensure_data_disk() {
@@ -578,6 +603,7 @@ EOF
 checkout_repo() {
     local current_rev
     local old_rev=""
+    local feature_args
 
     log "Cloning or updating Zebra repository"
     mkdir -p /opt
@@ -606,16 +632,52 @@ checkout_repo() {
     current_rev="$(git rev-parse HEAD)"
     chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
-    if [ ! -x "$APP_DIR/target/release/zebrad" ] || [ "$old_rev" != "$current_rev" ] || [ "$(cat "$RELEASE_MARKER_PATH" 2>/dev/null)" != "source:$current_rev" ]; then
-        log "Zebra source changed or binary missing; rebuilding"
-        su - "$APP_USER" -c 'source "$HOME/.cargo/env" && cd /opt/zebra && cargo build --release --locked --bin zebrad --features prometheus'
-    else
-        log "Zebra source unchanged; skipping rebuild"
+    feature_args=""
+    if [ -n "${cargo_build_features}" ]; then
+        feature_args="--features ${cargo_build_features}"
     fi
 
-    install -m 0755 -T "$APP_DIR/target/release/zebrad" "$ZEBRAD_BIN"
-    mkdir -p "$BASE_STATE_DIR"
-    echo "source:$current_rev" > "$RELEASE_MARKER_PATH"
+    # Keyed on BUILD_MARKER_PATH rather than on the presence of the binary: a
+    # build directed by cargo_build_args may legitimately produce no zebrad, and
+    # keying on the binary would rebuild such a box on every boot forever. set -e
+    # aborts the script on a failed build, so the marker only ever records a
+    # build that completed.
+    if [ "$old_rev" != "$current_rev" ] || [ "$(cat "$BUILD_MARKER_PATH" 2>/dev/null)" != "source:$current_rev" ]; then
+        log "Zebra source changed or not yet built at this rev; rebuilding"
+        # feature_args and cargo_build_args are intentionally unquoted: the shell
+        # must word-split them into separate cargo arguments.
+        su - "$APP_USER" -c "source \"\$HOME/.cargo/env\" && cd $APP_DIR && cargo build --release --locked --bin zebrad $feature_args ${cargo_build_args}"
+        mkdir -p "$BASE_STATE_DIR"
+        echo "source:$current_rev" > "$BUILD_MARKER_PATH"
+    else
+        log "Zebra source unchanged and already built; skipping rebuild"
+    fi
+
+    # A build driven by cargo_build_args may legitimately produce no zebrad
+    # binary (for example a check-only or fuzz-only box). Only install and
+    # record a release marker when one actually exists.
+    if [ -x "$APP_DIR/target/release/zebrad" ]; then
+        install -m 0755 -T "$APP_DIR/target/release/zebrad" "$ZEBRAD_BIN"
+        mkdir -p "$BASE_STATE_DIR"
+        echo "source:$current_rev" > "$RELEASE_MARKER_PATH"
+    else
+        log "Build produced no zebrad binary; skipping install and service start"
+    fi
+}
+
+build_fuzz_targets() {
+    local fuzz_path="$APP_DIR/${fuzz_dir}"
+
+    if [ ! -d "$fuzz_path" ]; then
+        log "fuzz_build is enabled but ${fuzz_dir} does not exist at this ref; skipping"
+        return 0
+    fi
+
+    ensure_fuzz_toolchain
+
+    log "Building cargo-fuzz harnesses in ${fuzz_dir}"
+    su - "$APP_USER" -c "source \"\$HOME/.cargo/env\" && cd $APP_DIR && cargo +nightly fuzz build --fuzz-dir ${fuzz_dir} ${fuzz_build_args}"
+    log "Fuzz harnesses built; binaries are under $fuzz_path/target"
 }
 
 install_zebrad_release() {
@@ -694,11 +756,20 @@ main() {
     if [ -n "${zebra_repo_ref}" ] || [ -n "${zebra_git_fetch_ref}" ]; then
         ensure_build_toolchain
         checkout_repo
+
+        if [ "${fuzz_build}" = "true" ]; then
+            build_fuzz_targets
+        fi
     else
         install_zebrad_release
     fi
 
-    systemctl restart zebrad.service
+    if [ -x "$ZEBRAD_BIN" ]; then
+        systemctl restart zebrad.service
+    else
+        log "No zebrad binary installed; leaving zebrad.service stopped"
+    fi
+
     log "${module_role} initialization complete"
 }
 
