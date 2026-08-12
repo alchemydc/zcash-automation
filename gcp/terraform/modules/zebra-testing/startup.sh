@@ -14,6 +14,10 @@ ZEBRAD_BIN="/usr/local/bin/zebrad"
 BASE_STATE_DIR="/var/lib/${module_role}"
 BASE_MARKER_PATH="$BASE_STATE_DIR/base-provisioned"
 RELEASE_MARKER_PATH="$BASE_STATE_DIR/zebrad-release"
+# Records the rev of the last cargo build that completed, whether or not it
+# produced a zebrad binary. Lives on the boot disk alongside /opt/zebra/target,
+# so the marker and the build artifacts it describes share a lifetime.
+BUILD_MARKER_PATH="$BASE_STATE_DIR/source-build"
 TOOLCHAIN_MARKER_PATH="$BASE_STATE_DIR/build-toolchain-provisioned"
 FUZZ_TOOLCHAIN_MARKER_PATH="$BASE_STATE_DIR/fuzz-toolchain-provisioned"
 DATA_DISK_PATH="$(readlink -f /dev/disk/by-id/google-${data_disk_name})"
@@ -165,7 +169,11 @@ ensure_fuzz_toolchain() {
 
     log "Installing nightly toolchain and cargo-fuzz for $APP_USER"
 
-    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && rustup toolchain install nightly'
+    # --profile minimal: rustc, cargo and rust-std only. rust-std carries the
+    # sanitizer runtimes cargo-fuzz needs, and the stable toolchain already
+    # provides rustfmt and clippy, so the nightly docs/components are dead weight
+    # on a box whose boot disk is already sized for a large target/ tree.
+    su - "$APP_USER" -c 'source "$HOME/.cargo/env" && rustup toolchain install nightly --profile minimal'
     su - "$APP_USER" -c 'source "$HOME/.cargo/env" && cargo install cargo-fuzz --locked'
 
     mkdir -p "$BASE_STATE_DIR"
@@ -629,13 +637,20 @@ checkout_repo() {
         feature_args="--features ${cargo_build_features}"
     fi
 
-    if [ ! -x "$APP_DIR/target/release/zebrad" ] || [ "$old_rev" != "$current_rev" ] || [ "$(cat "$RELEASE_MARKER_PATH" 2>/dev/null)" != "source:$current_rev" ]; then
-        log "Zebra source changed or binary missing; rebuilding"
-        # feature_args and cargo_build_args are deliberately unquoted so the
-        # shell word-splits them into separate cargo arguments.
+    # Keyed on BUILD_MARKER_PATH rather than on the presence of the binary: a
+    # build directed by cargo_build_args may legitimately produce no zebrad, and
+    # keying on the binary would rebuild such a box on every boot forever. set -e
+    # aborts the script on a failed build, so the marker only ever records a
+    # build that completed.
+    if [ "$old_rev" != "$current_rev" ] || [ "$(cat "$BUILD_MARKER_PATH" 2>/dev/null)" != "source:$current_rev" ]; then
+        log "Zebra source changed or not yet built at this rev; rebuilding"
+        # feature_args and cargo_build_args are intentionally unquoted: the shell
+        # must word-split them into separate cargo arguments.
         su - "$APP_USER" -c "source \"\$HOME/.cargo/env\" && cd $APP_DIR && cargo build --release --locked --bin zebrad $feature_args ${cargo_build_args}"
+        mkdir -p "$BASE_STATE_DIR"
+        echo "source:$current_rev" > "$BUILD_MARKER_PATH"
     else
-        log "Zebra source unchanged; skipping rebuild"
+        log "Zebra source unchanged and already built; skipping rebuild"
     fi
 
     # A build driven by cargo_build_args may legitimately produce no zebrad
