@@ -102,6 +102,36 @@ variable "zebra_release_tag" {
   default     = "latest"
 }
 
+variable "cargo_build_features" {
+  description = "Cargo features for the zebrad source build. Empty omits --features entirely, which is what you want alongside a cargo_build_args of \"--all-features\". Only used in source mode."
+  type        = string
+  default     = "prometheus"
+}
+
+variable "cargo_build_args" {
+  description = "Extra arguments appended verbatim to the zebrad `cargo build` invocation, for example \"--all-features\" or \"--all-targets\". Word-split by the shell. Only used in source mode."
+  type        = string
+  default     = ""
+}
+
+variable "fuzz_build" {
+  description = "Also build the cargo-fuzz harnesses under zebra-fuzz/fuzz after the zebrad build. Installs a nightly toolchain and cargo-fuzz on first use. Only used in source mode."
+  type        = bool
+  default     = false
+}
+
+variable "fuzz_build_args" {
+  description = "Extra arguments appended to `cargo +nightly fuzz build`, for example \"-O\" for the release + ASan mode OSS-Fuzz uses. Only used when fuzz_build is true."
+  type        = string
+  default     = ""
+}
+
+variable "fuzz_dir" {
+  description = "Path to the cargo-fuzz directory, relative to the repository root. Only used when fuzz_build is true."
+  type        = string
+  default     = "zebra-fuzz/fuzz"
+}
+
 variable "zebra_network" {
   description = "The Zebra network name, such as Mainnet, Testnet, or Regtest"
   type        = string
