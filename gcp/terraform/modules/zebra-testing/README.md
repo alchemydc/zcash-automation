@@ -25,6 +25,7 @@ These apply only in source mode (`zebra_repo_ref` or `zebra_git_fetch_ref` set) 
 Notes:
 
 - The `zebrad` build always includes `--bin zebrad`, so `cargo_build_args` narrows or extends that build rather than replacing it. This module builds a node; it is not a general-purpose `cargo` runner.
+- The build dependencies (`build-essential`, `clang`, `git`, `libclang-dev`, `libssl-dev`, `llvm`, `pkg-config`, `protobuf-compiler` — `protoc` is required by the lightwalletd gRPC codegen) are installed once per host, guarded by `/var/lib/zebra-testing/build-toolchain-provisioned`. A host provisioned before a package was added to that list will **not** pick it up on reboot: delete the marker (and `source-build` to force a rebuild) and rerun the startup script, or replace the instance.
 - `fuzz_build` installs a **nightly** toolchain and `cargo-fuzz` on first use, because libFuzzer's sanitizers need `-Z` flags. The `zebrad` build stays on stable. The install is guarded by its own marker file, so it happens once per host.
 - `zebra-fuzz/fuzz` declares its own `[workspace]` and its own `Cargo.lock`, so it is never built by the root `cargo build`; it needs the explicit `--fuzz-dir` invocation this flag adds.
 - If `fuzz_dir` does not exist at the checked-out ref, the fuzz build logs and skips rather than failing the startup script.
