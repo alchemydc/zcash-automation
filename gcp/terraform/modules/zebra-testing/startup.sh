@@ -136,7 +136,8 @@ ensure_build_toolchain() {
         libclang-dev \
         libssl-dev \
         llvm \
-        pkg-config
+        pkg-config \
+        protobuf-compiler
 
     app_home="$(getent passwd "$APP_USER" | cut -d: -f6)"
 
@@ -607,6 +608,12 @@ checkout_repo() {
 
     log "Cloning or updating Zebra repository"
     mkdir -p /opt
+
+    # The clone below runs as root, but the tree is chowned to $APP_USER once the
+    # checkout is done, so on every later run root's git commands would abort
+    # with "detected dubious ownership". --replace-all keeps the rerun idempotent
+    # instead of appending a duplicate entry to /root/.gitconfig each boot.
+    git config --global --replace-all safe.directory "$APP_DIR"
 
     if [ ! -d "$APP_DIR/.git" ]; then
         git clone "${zebra_repo_url}" "$APP_DIR"
