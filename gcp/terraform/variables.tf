@@ -210,6 +210,9 @@ variable "zebra_testing_deployments" {
     # disk, not on the persistent state disk.
     instance_type  = optional(string, null)
     boot_disk_size = optional(number, null)
+    # c4/c3 machine types reject pd-*; use hyperdisk-balanced for both disks there.
+    data_disk_type = optional(string, null)
+    boot_disk_type = optional(string, null)
 
     # Source-build knobs. Ignored in release-binary mode.
     cargo_build_features = optional(string, "prometheus")
