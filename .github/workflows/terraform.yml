@@ -1,0 +1,67 @@
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - 'gcp/terraform/**'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'gcp/terraform/**'
+      - '.github/workflows/terraform.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gcp/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: latest
+          tofu_wrapper: false
+
+      - name: tofu fmt
+        run: tofu fmt -check -recursive -diff
+
+      # backend.tf is gitignored; write a local stub so `init` has something to configure.
+      - name: Stub local backend
+        run: |
+          if [ ! -f backend.tf ]; then
+            cat > backend.tf <<'EOF'
+          terraform {
+            backend "local" {}
+          }
+          EOF
+          fi
+
+      - name: tofu validate (root)
+        run: |
+          tofu init -backend=false -input=false
+          tofu validate -no-color
+
+      - name: tofu validate (modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in modules/*/; do
+            echo "::group::validate $dir"
+            (
+              cd "$dir"
+              tofu init -backend=false -input=false
+              tofu validate -no-color
+            )
+            echo "::endgroup::"
+          done
