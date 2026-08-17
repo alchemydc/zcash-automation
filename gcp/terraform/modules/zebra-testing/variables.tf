@@ -64,6 +64,12 @@ variable "boot_disk_size" {
   description = "Size (in GB) of the boot disk, used for source checkout and build artifacts in source mode"
 }
 
+variable "boot_disk_type" {
+  type        = string
+  description = "Disk type for the boot disk. C4/C3 machine types require a hyperdisk-* type here."
+  default     = "pd-standard"
+}
+
 variable "subnetwork" {
   type        = string
   description = "The self_link of the subnetwork to use for internal addresses"

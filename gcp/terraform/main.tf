@@ -387,12 +387,13 @@ module "zebra-testing" {
   zone                        = var.zone
   data_disk_name              = each.value.data_disk_name
   data_disk_size              = each.value.data_disk_size
-  data_disk_type              = var.zebra_data_disk_type
+  data_disk_type              = coalesce(each.value.data_disk_type, var.zebra_data_disk_type)
   data_disk_snapshot          = each.value.data_disk_snapshot
   GCP_DEFAULT_SERVICE_ACCOUNT = var.GCP_DEFAULT_SERVICE_ACCOUNT
   instance_count              = each.value.replicas
   instance_type               = coalesce(each.value.instance_type, var.zebra_testing_instance_type)
   boot_disk_size              = coalesce(each.value.boot_disk_size, var.boot_disk_size)
+  boot_disk_type              = coalesce(each.value.boot_disk_type, "pd-standard")
   hostname_prefix             = each.value.hostname_prefix
   subnetwork                  = data.google_compute_subnetwork.zcash_subnetwork.self_link
   os_image                    = var.os_image

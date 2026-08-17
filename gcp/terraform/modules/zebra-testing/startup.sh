@@ -6,6 +6,8 @@ exec > >(tee -a "$LOG_FILE" | logger -t "${module_role}-startup") 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+# GCE metadata startup runs as root with an empty env; git needs HOME.
+export HOME="$${HOME:-/root}"
 
 APP_USER="zebra"
 APP_DIR="/opt/zebra"

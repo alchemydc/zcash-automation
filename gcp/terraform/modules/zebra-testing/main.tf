@@ -36,6 +36,7 @@ resource "google_compute_instance" "zebra_testing" {
     initialize_params {
       image = var.os_image
       size  = var.boot_disk_size
+      type  = var.boot_disk_type
     }
   }
 
