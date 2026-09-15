@@ -91,6 +91,29 @@ or just reboot — the script is installed into
 per-boot hook is what replaces GCE's re-run-metadata-on-every-boot behaviour,
 which `startup.sh` is written to depend on.
 
+### Cosmovisor pre-upgrade backups are disabled
+
+Cosmovisor copies the whole data directory before applying an upgrade. Valar
+Group's guidance is to turn that off permanently
+(<https://setup.valargroup.org/#cosmovisor-backup-maintenance>): the copy
+doubles disk for its duration and delays the restart at exactly the moment the
+chain wants the node back.
+
+The module stages
+`/etc/systemd/system/svoted.service.d/zz-cosmovisor-skip-backup.conf` with
+`UNSAFE_SKIP_BACKUP=true`, **byte-identical** to the drop-in Valar's own
+`disable-cosmovisor-backups.sh` writes — same path, same filename, same two
+lines, same mode. That script compares what it finds against what it would
+write, so on a host this module built it reports "already current" and changes
+nothing. Do not reformat that file's content; matching exactly is the point.
+
+It only prevents *new* backups. Existing `data-backup-<date>` directories under
+`SVOTE_HOME` are left alone — deleting chain data unprompted is not a boot
+script's job. Remove them by hand, or run Valar's script, which also handles
+them. This matters when migrating an existing validator: exclude
+`data-backup-*` from the rsync or you will carry full copies of chain state
+onto the new volume.
+
 ### Smaller deltas
 
 - **Data volume device path** is `/dev/disk/by-id/scsi-0DO_Volume_<name>`, so

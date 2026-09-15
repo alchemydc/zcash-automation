@@ -5,8 +5,10 @@ locals {
   # cloud-config wrapper:
   #
   #   Size. user_data is capped at 64 KiB (65536 bytes) and the rendered script
-  #   is already ~62.5 KB -- it fits today, with about 3 KB of headroom, which
-  #   is not a margin worth building on. gz+b64 takes it to ~28 KB.
+  #   sits just under it -- close enough that adding one more function has
+  #   already eaten most of the margin once. Compressed it runs at roughly 45%
+  #   of the cap, so the limit stops being something to think about on every
+  #   edit. If you ever do hit it, the script is the thing to trim, not this.
   #
   #   Re-run semantics. GCE re-ran startup-script metadata on every boot, and
   #   this script is written to depend on that -- it is idempotent and refreshes

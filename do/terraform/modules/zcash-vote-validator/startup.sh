@@ -580,6 +580,48 @@ EOF
   systemctl daemon-reload
 }
 
+stage_cosmovisor_skip_backup_dropin() {
+  # Cosmovisor copies the whole data directory before applying an upgrade.
+  # Valar Group's guidance is to turn that off permanently
+  # (https://setup.valargroup.org/#cosmovisor-backup-maintenance): the copy
+  # doubles disk for the duration, and on a validator it delays the restart at
+  # exactly the moment the chain wants the node back.
+  #
+  # Byte-identical, deliberately, to the drop-in Valar's own
+  # disable-cosmovisor-backups.sh writes -- same path, same filename, same two
+  # lines, same 0644. That script compares the file it finds against the file it
+  # would write and reports "already current" when they match, so a host
+  # provisioned by this module is already in the state their tooling wants and
+  # running it changes nothing. Any edit here breaks that, so don't reformat it.
+  #
+  # Separate from 10-hardening.conf rather than folded into it for the same
+  # reason: their script manages this exact filename, and it sorts after ours,
+  # so the two never disagree about who owns the setting.
+  #
+  # This only stops NEW backups. Existing data-backup-<date> directories under
+  # SVOTE_HOME are left alone -- deleting chain data is not something a boot
+  # script should do unprompted. Remove them by hand, or with Valar's script.
+  local dropin_dir="/etc/systemd/system/svoted.service.d"
+  local dropin="$dropin_dir/zz-cosmovisor-skip-backup.conf"
+  local tmp
+
+  install -d -m 0755 "$dropin_dir"
+
+  tmp="$(mktemp)"
+  printf '[Service]\n' > "$tmp"
+  printf 'Environment="UNSAFE_SKIP_BACKUP=true"\n' >> "$tmp"
+
+  if [ -f "$dropin" ] && cmp -s "$tmp" "$dropin"; then
+    rm -f "$tmp"
+    return 0
+  fi
+
+  log "Staging cosmovisor skip-backup drop-in"
+  install -m 0644 "$tmp" "$dropin"
+  rm -f "$tmp"
+  systemctl daemon-reload
+}
+
 install_key_backup() {
   # The validator signing key does not exist until `svote join` runs
   # init-validator-keys, so this installs the tooling and leaves the timer
@@ -1772,6 +1814,7 @@ main() {
   install_upgrade_staging
   write_caddyfile
   stage_svoted_hardening_dropin
+  stage_cosmovisor_skip_backup_dropin
   install_key_backup
   install_operator_cli
   install_upgrade_check_timer
