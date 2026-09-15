@@ -1,21 +1,3 @@
-variable "do_token" {
-  description = <<-EOT
-    DigitalOcean API token. Sourced from the DIGITALOCEAN_TOKEN environment
-    variable (TF_VAR_do_token, or the provider's own env fallback), never from a
-    committed tfvars file.
-
-    Mint it with Custom scopes rather than Full Access. Terraform needs
-    create/read/update/delete on droplet, block_storage, firewall, vpc and
-    project, plus block_storage_action create/read for volume attach, tag
-    create/read, ssh_key read, and read on regions/sizes/image. DigitalOcean
-    scopes are per resource type, not per resource instance, so a dedicated team
-    is the only real blast-radius control.
-  EOT
-  type        = string
-  sensitive   = true
-  default     = null
-}
-
 variable "region" {
   description = "DigitalOcean region slug all resources are created in"
   type        = string

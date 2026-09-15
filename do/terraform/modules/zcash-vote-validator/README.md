@@ -124,7 +124,21 @@ Four things cannot be created by Terraform:
    `droplet`, `block_storage`, `firewall`, `vpc`, `project` (create/read/update/
    delete), `block_storage_action` (create/read), `tag` (create/read),
    `ssh_key:read`, and read on regions/sizes/image. A missing scope surfaces as
-   a 403 naming the endpoint. Export as `DIGITALOCEAN_TOKEN`.
+   a 403 naming the endpoint. Set an expiry — it is mandatory at mint time, and
+   a DigitalOcean PAT is otherwise a long-lived bearer token with no IP
+   restriction and no refresh.
+
+   Export it as **`DIGITALOCEAN_ACCESS_TOKEN`**, which is the only spelling both
+   tools honour: `doctl` reads only that name, while the Terraform provider
+   accepts either it or `DIGITALOCEAN_TOKEN`.
+
+   Do **not** run `doctl auth init` — it persists the token in plaintext to
+   `~/.config/doctl/config.yaml`. On the dev boxes the token is forwarded over
+   ssh and injected per-process by `do-run` (ansible-toolbox, dev_server role),
+   so it never reaches disk; prefix commands with it:
+
+       do-run doctl account get
+       do-run tofu plan
 4. **SSH public keys**, uploaded once (console or `doctl compute ssh-key
    import`) and referenced by fingerprint via `ssh_key_fingerprints`. Not
    optional: DigitalOcean emails a root password for a droplet created with no
@@ -136,8 +150,8 @@ Cloudflare nameservers.
 
 Sanity-check before applying:
 
-    doctl compute size list | grep -i amd
-    doctl compute image list-distribution | grep -i debian
+    do-run doctl compute size list | grep -i amd
+    do-run doctl compute image list-distribution | grep -i debian
 
 Debian 13 is required, not preferred: `install_base_packages` installs Caddy
 from Debian main, which ships it from trixie onward. On Debian 12 the bootstrap
