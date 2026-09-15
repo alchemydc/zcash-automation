@@ -17,9 +17,19 @@ resource "digitalocean_project" "zcash" {
   ]
 }
 
-resource "digitalocean_vpc" "zcash" {
-  count  = local.vote_validator_count
-  name   = var.vpc_name
+# The region's default VPC, looked up rather than created.
+#
+# Creating one is a trap: DigitalOcean promotes the first VPC in a region to be
+# that region's default, and a default VPC cannot be deleted -- ever. So a
+# `digitalocean_vpc` resource applied into a fresh region becomes permanently
+# undestroyable, `tofu destroy` fails on it with 403 "Can not delete default
+# VPCs", and the resource is stuck in state. Learned the hard way in sfo3, where
+# `zcash-vote` is now the immortal default.
+#
+# Per the provider docs, passing only `region` returns that region's default VPC,
+# which is what the droplet wants anyway: a VPC is a private network boundary,
+# and this module deploys a single host into it.
+data "digitalocean_vpc" "zcash" {
   region = var.region
 }
 
@@ -28,7 +38,7 @@ module "zcash-vote-validator" {
   source = "./modules/zcash-vote-validator"
 
   region   = var.region
-  vpc_uuid = digitalocean_vpc.zcash[0].id
+  vpc_uuid = data.digitalocean_vpc.zcash.id
   image    = var.os_image
 
   hostname             = var.vote_validator_hostname

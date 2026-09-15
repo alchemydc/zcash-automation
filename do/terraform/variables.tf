@@ -29,18 +29,15 @@ variable "project_environment" {
   }
 }
 
-variable "vpc_name" {
-  description = "Name of the VPC the droplet joins"
-  type        = string
-  default     = "zcash-vote"
-}
-
 variable "ssh_key_fingerprints" {
   description = <<-EOT
     Fingerprints of DigitalOcean SSH keys authorised on the droplet. Upload the
     operators' public keys once (console, or `doctl compute ssh-key import`) and
     reference them here: they are account-level objects shared across operators
     and outlive this module, so Terraform does not manage them.
+
+    Note DigitalOcean injects these at droplet creation only -- rotating a key on
+    the account does nothing to a running droplet, which has to be rebuilt.
 
     List them with: doctl compute ssh-key list
   EOT
