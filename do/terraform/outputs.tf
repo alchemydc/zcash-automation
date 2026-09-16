@@ -37,3 +37,14 @@ output "vote_validator_post_deployment_instructions" {
   description = "What an operator has to do after apply, in order"
   value       = try(module.zcash-vote-validator[0].post_deployment_instructions, "")
 }
+
+output "vote_validator_startup_script" {
+  description = <<-EOT
+    The rendered bootstrap script. `user_data` is ignore_changes on the droplet,
+    so Terraform will not push an edited script to a running host and `plan` will
+    report no changes -- this output is the only supported way to get the new
+    script onto one. See the lifecycle comment in the module's main.tf.
+  EOT
+  value       = try(module.zcash-vote-validator[0].startup_script, "")
+  sensitive   = true
+}

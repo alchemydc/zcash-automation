@@ -19,6 +19,7 @@ locals {
   #   very first boot the symlink does not exist yet; runcmd therefore executes
   #   the script explicitly that once.
   startup_script = templatefile("${path.module}/startup.sh", {
+    admin_user                = var.admin_user,
     allow_binary_autodownload = var.allow_binary_autodownload,
     data_disk_name            = var.data_disk_name,
     helper_api_port           = var.helper_api_port,
@@ -32,6 +33,7 @@ locals {
     module_role               = "zcash-vote-validator",
     moniker                   = var.moniker,
     p2p_port                  = var.p2p_port,
+    permit_root_login         = var.permit_root_login,
     restored_from_snapshot    = var.data_volume_snapshot_id != null,
     svote_admin_url           = var.svote_admin_url,
     svote_env                 = var.svote_env,
@@ -118,7 +120,7 @@ resource "digitalocean_droplet" "vote_validator" {
     # content after create, so drift is invisible to `plan`. To update a running
     # host, copy the rendered script over and run it:
     #
-    #   tofu output -raw startup_script > /tmp/startup.sh
+    #   tofu output -raw vote_validator_startup_script > /tmp/startup.sh   (from do/terraform)
     #   scp /tmp/startup.sh root@<ip>:/usr/local/sbin/zcash-vote-validator-startup.sh
     #   ssh root@<ip> /usr/local/sbin/zcash-vote-validator-startup.sh
     #

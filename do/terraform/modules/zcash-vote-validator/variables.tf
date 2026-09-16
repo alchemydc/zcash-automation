@@ -52,6 +52,41 @@ variable "ssh_key_fingerprints" {
   }
 }
 
+variable "admin_user" {
+  description = <<-EOT
+    Non-root login account created on the droplet, seeded with root's authorised
+    keys and granted passwordless sudo. Empty disables it, leaving the host
+    root-only.
+
+    It has to be created here because DigitalOcean only ever populates root's
+    authorized_keys -- no other account gets a key unless this module copies one.
+    Keys are merged rather than overwritten, so a key added by hand survives a
+    re-run and a key later added to root is picked up.
+  EOT
+  type        = string
+  default     = "svoteadmin"
+}
+
+variable "permit_root_login" {
+  description = <<-EOT
+    sshd PermitRootLogin value. "prohibit-password" is key-only root, which is
+    the safe default because DigitalOcean's injected key is initially the only
+    way in.
+
+    Set to "no" only after confirming you can log in as admin_user and sudo. The
+    bootstrap refuses to apply "no" while that account is missing or has no
+    authorized key, falling back to prohibit-password rather than locking the
+    host out -- but do not lean on that guard.
+  EOT
+  type        = string
+  default     = "prohibit-password"
+
+  validation {
+    condition     = contains(["prohibit-password", "no"], var.permit_root_login)
+    error_message = "permit_root_login must be \"prohibit-password\" or \"no\"."
+  }
+}
+
 variable "ssh_source_ranges" {
   description = <<-EOT
     Source ranges permitted to reach :22. Defaults to open, because this

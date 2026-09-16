@@ -76,6 +76,24 @@ variable "vote_validator_ssh_source_ranges" {
   default     = ["0.0.0.0/0", "::/0"]
 }
 
+variable "vote_validator_admin_user" {
+  description = <<-EOT
+    Non-root login account on the droplet, seeded with root's authorised keys and
+    granted passwordless sudo. Empty leaves the host root-only.
+  EOT
+  type        = string
+  default     = "svoteadmin"
+}
+
+variable "vote_validator_permit_root_login" {
+  description = <<-EOT
+    sshd PermitRootLogin. Set to "no" only after confirming admin_user works --
+    DigitalOcean's injected root key is initially the only way in.
+  EOT
+  type        = string
+  default     = "prohibit-password"
+}
+
 variable "vote_validator_tags" {
   description = "DigitalOcean tags applied to the droplet, volume and firewall"
   type        = list(string)

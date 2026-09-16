@@ -45,6 +45,8 @@ module "zcash-vote-validator" {
   droplet_size         = var.vote_validator_droplet_size
   ssh_key_fingerprints = var.ssh_key_fingerprints
   ssh_source_ranges    = var.vote_validator_ssh_source_ranges
+  admin_user           = var.vote_validator_admin_user
+  permit_root_login    = var.vote_validator_permit_root_login
   tags                 = var.vote_validator_tags
 
   data_disk_name          = var.vote_validator_data_disk_name

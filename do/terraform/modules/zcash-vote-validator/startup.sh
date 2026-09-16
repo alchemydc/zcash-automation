@@ -296,6 +296,71 @@ ensure_data_disk() {
   install -o "$APP_USER" -g "$APP_USER" -d "$INSTALL_DIR"
 }
 
+ensure_admin_user() {
+  # A non-root login account, because DigitalOcean gives you root and nothing
+  # else: it injects the configured keys into root's authorized_keys at droplet
+  # creation and never touches any other account. So an admin user only exists
+  # if this script makes one, and it only has keys if this script copies them.
+  #
+  # Skipped entirely when admin_user is empty, which leaves the host root-only.
+  local admin="${admin_user}"
+  local home
+  local sudoers_file
+  local key
+
+  [ -n "$admin" ] || return 0
+
+  if ! id -u "$admin" >/dev/null 2>&1; then
+    log "Creating admin account $admin"
+    useradd -m -s /bin/bash "$admin"
+  fi
+
+  home="$(getent passwd "$admin" | cut -d: -f6)"
+  [ -n "$home" ] || { log "ERROR: no home directory for $admin"; return 1; }
+
+  install -o "$admin" -g "$admin" -m 0700 -d "$home/.ssh"
+  touch "$home/.ssh/authorized_keys"
+
+  # Merge rather than overwrite. Copying wholesale would clobber keys an
+  # operator added by hand, and seeding once would never pick up a key added to
+  # root later. Appending only what is missing does both, and is a no-op on the
+  # common re-run.
+  if [ -f /root/.ssh/authorized_keys ]; then
+    while IFS= read -r key; do
+      case "$key" in ''|\#*) continue ;; esac
+      if ! grep -qxF "$key" "$home/.ssh/authorized_keys"; then
+        log "Authorising a key from root for $admin"
+        printf '%s\n' "$key" >> "$home/.ssh/authorized_keys"
+      fi
+    done < /root/.ssh/authorized_keys
+  fi
+
+  chown "$admin:$admin" "$home/.ssh/authorized_keys"
+  chmod 0600 "$home/.ssh/authorized_keys"
+
+  if [ ! -s "$home/.ssh/authorized_keys" ]; then
+    log "WARNING: $admin has no authorized keys; root is still the only way in"
+  fi
+
+  # Passwordless, because the account has no password to give: it is created
+  # without one, so a sudo that prompts is a sudo that can never succeed.
+  sudoers_file="/etc/sudoers.d/$admin"
+  cat <<EOF > "$sudoers_file.tmp"
+# Installed by ${module_role} startup. $admin is the non-root login account;
+# the account has no password, so sudo has to be passwordless to work at all.
+$admin ALL=(ALL) NOPASSWD: ALL
+EOF
+
+  chmod 0440 "$sudoers_file.tmp"
+  if visudo -cqf "$sudoers_file.tmp"; then
+    mv "$sudoers_file.tmp" "$sudoers_file"
+  else
+    rm -f "$sudoers_file.tmp"
+    log "Refusing to install malformed sudoers fragment for $admin"
+    exit 1
+  fi
+}
+
 harden_sshd() {
   # On GCE this host was reachable on :22 only through Google's IAP forwarders,
   # gated by Cloud IAM. DigitalOcean has no equivalent and ssh_source_ranges is
@@ -306,20 +371,34 @@ harden_sshd() {
   # A drop-in rather than editing sshd_config: survives an openssh-server
   # upgrade, and the 60- prefix sorts after the image's own drop-ins.
   #
-  # prohibit-password, NOT no. DigitalOcean injects the configured keys into
-  # root's authorized_keys at droplet creation and this module adds no other
-  # login account, so root is the only way in. PermitRootLogin no would lock
-  # everyone out of the host on the next reload.
+  # A drop-in rather than editing sshd_config: survives an openssh-server
+  # upgrade, and the 60- prefix sorts after the image's own drop-ins.
   local dropin="/etc/ssh/sshd_config.d/60-${module_role}.conf"
+  local root_login="${permit_root_login}"
+  local admin="${admin_user}"
+  local admin_home
   local tmp
   local unit
+
+  # Refuse to lock root out unless somebody else can actually get in. The
+  # configured value is only honoured once the admin account exists AND holds at
+  # least one key -- otherwise this silently downgrades to prohibit-password.
+  # Getting this wrong costs the host, and the check is two lines.
+  if [ "$root_login" = "no" ]; then
+    admin_home="$(getent passwd "$admin" 2>/dev/null | cut -d: -f6)"
+    if [ -z "$admin" ] || [ -z "$admin_home" ] || [ ! -s "$admin_home/.ssh/authorized_keys" ]; then
+      log "WARNING: permit_root_login=no requested, but $${admin:-<no admin user>} cannot log in yet."
+      log "         Falling back to prohibit-password rather than locking this host out."
+      root_login="prohibit-password"
+    fi
+  fi
 
   install -d -m 0755 /etc/ssh/sshd_config.d
 
   tmp="$(mktemp)"
   cat <<SSHD > "$tmp"
 # Managed by ${module_role} startup. Edits here are overwritten on next boot.
-PermitRootLogin prohibit-password
+PermitRootLogin $root_login
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
@@ -330,7 +409,7 @@ SSHD
     return 0
   fi
 
-  log "Hardening sshd (key-only, no password auth)"
+  log "Hardening sshd (key-only, no password auth, PermitRootLogin $root_login)"
   install -m 0644 "$tmp" "$dropin"
   rm -f "$tmp"
 
@@ -1866,6 +1945,7 @@ main() {
   # $SVOTE_HOME, which is why that is safe.
   ensure_base_provisioning
   ensure_data_disk
+  ensure_admin_user
   harden_sshd
   configure_sudoers
   write_svote_env_file

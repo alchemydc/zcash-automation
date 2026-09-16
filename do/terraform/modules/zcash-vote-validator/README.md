@@ -96,7 +96,7 @@ equivalent here is `lifecycle { ignore_changes = [user_data] }`, which is set.
 The cost: **Terraform stops managing the script's content after create, so drift
 is invisible to `plan`.** To update a running host:
 
-    tofu output -raw startup_script > /tmp/startup.sh
+    tofu output -raw vote_validator_startup_script > /tmp/startup.sh
     scp /tmp/startup.sh root@<ip>:/usr/local/sbin/zcash-vote-validator-startup.sh
     ssh root@<ip> /usr/local/sbin/zcash-vote-validator-startup.sh
 
