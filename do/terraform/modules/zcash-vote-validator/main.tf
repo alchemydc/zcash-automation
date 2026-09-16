@@ -78,6 +78,22 @@ resource "digitalocean_volume" "vote_validator_data" {
     # snapshot source must not recreate it, because recreating it destroys the
     # validator signing key.
     ignore_changes = [snapshot_id]
+
+    # This volume is the validator. It holds priv_validator_key.json, the
+    # operator keyring, and -- unlike the GCE arrangement -- the key backup
+    # spool as well, because DigitalOcean has no bucket whose permissions can
+    # be narrowed to write-only. On GCE a destroyed disk still left the backups
+    # sitting in a prevent_destroy bucket. Here one `tofu destroy` would take
+    # the key and every copy of it in the same action.
+    #
+    # So make it a hard plan error rather than silent, unrecoverable data loss.
+    # Decommissioning a validator should be a deliberate act, not a side effect
+    # of toggling vote_validator_enabled or tearing down a test.
+    #
+    # To actually remove it: take a final `svote backup-keys`, copy the archive
+    # off-host, verify you can decrypt it with the age identity, then either
+    # drop this line or `tofu state rm` the resource and delete it by hand.
+    prevent_destroy = true
   }
 }
 
