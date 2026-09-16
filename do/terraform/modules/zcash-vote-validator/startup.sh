@@ -296,6 +296,63 @@ ensure_data_disk() {
   install -o "$APP_USER" -g "$APP_USER" -d "$INSTALL_DIR"
 }
 
+harden_sshd() {
+  # On GCE this host was reachable on :22 only through Google's IAP forwarders,
+  # gated by Cloud IAM. DigitalOcean has no equivalent and ssh_source_ranges is
+  # deliberately open, so sshd is on the public internet and the remaining
+  # control is the key itself. Assert that explicitly rather than inheriting
+  # whatever the image ships.
+  #
+  # A drop-in rather than editing sshd_config: survives an openssh-server
+  # upgrade, and the 60- prefix sorts after the image's own drop-ins.
+  #
+  # prohibit-password, NOT no. DigitalOcean injects the configured keys into
+  # root's authorized_keys at droplet creation and this module adds no other
+  # login account, so root is the only way in. PermitRootLogin no would lock
+  # everyone out of the host on the next reload.
+  local dropin="/etc/ssh/sshd_config.d/60-${module_role}.conf"
+  local tmp
+  local unit
+
+  install -d -m 0755 /etc/ssh/sshd_config.d
+
+  tmp="$(mktemp)"
+  cat <<SSHD > "$tmp"
+# Managed by ${module_role} startup. Edits here are overwritten on next boot.
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+SSHD
+
+  if [ -f "$dropin" ] && cmp -s "$tmp" "$dropin"; then
+    rm -f "$tmp"
+    return 0
+  fi
+
+  log "Hardening sshd (key-only, no password auth)"
+  install -m 0644 "$tmp" "$dropin"
+  rm -f "$tmp"
+
+  # Never reload a configuration sshd rejects -- that is how a remote host is
+  # lost. Roll the drop-in back instead and leave the running daemon alone.
+  if ! sshd -t 2>/dev/null; then
+    log "ERROR: sshd rejected the hardening drop-in; removing it and leaving sshd as-is"
+    rm -f "$dropin"
+    return 1
+  fi
+
+  # Debian 13 ships the socket-activated unit as 'ssh'; 'sshd' is an alias on
+  # some images and absent on others.
+  for unit in ssh sshd; do
+    if systemctl list-unit-files "$${unit}.service" >/dev/null 2>&1 \
+       && systemctl is-active --quiet "$unit"; then
+      systemctl reload "$unit" || systemctl restart "$unit"
+      break
+    fi
+  done
+}
+
 configure_sudoers() {
   # join.sh is not optional about this: it writes systemd units with `sudo tee`,
   # installs Caddy with `sudo apt-get`, and calls `sudo systemctl` non
@@ -1809,6 +1866,7 @@ main() {
   # $SVOTE_HOME, which is why that is safe.
   ensure_base_provisioning
   ensure_data_disk
+  harden_sshd
   configure_sudoers
   write_svote_env_file
   install_upgrade_staging

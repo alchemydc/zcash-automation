@@ -68,6 +68,20 @@ IAM with org-level audit logging. DigitalOcean has no equivalent.
 several operators on dynamic addresses, so an allowlist would be either useless
 or an outage waiting to happen.
 
+`harden_sshd` asserts key-only access on every boot via
+`/etc/ssh/sshd_config.d/60-zcash-vote-validator.conf`: `PermitRootLogin
+prohibit-password`, `PasswordAuthentication no`, `KbdInteractiveAuthentication
+no`. It validates with `sshd -t` and rolls the drop-in back rather than reloading
+a configuration sshd rejects.
+
+`prohibit-password` rather than `no` is deliberate. DigitalOcean injects the
+configured keys into **root's** `authorized_keys` at droplet creation and this
+module creates no other login account, so root is the only way in and
+`PermitRootLogin no` would lock everyone out on the next reload. **Login is
+therefore root-only by design** — if you want a non-root admin account, it has
+to be created here *and* given a copy of root's `authorized_keys`, because
+DigitalOcean will not populate it.
+
 Note the knock-on effect: `docs/svote-installer-security-analysis.md` §2.5
 accepted `join.sh`'s `/tmp` race partly *because* the host was "single-purpose
 with IAP-only SSH." That justification is weaker here.
