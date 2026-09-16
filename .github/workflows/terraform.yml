@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'gcp/terraform/**'
+      - 'do/terraform/**'
       - '.github/workflows/terraform.yml'
   push:
     branches: [main]
     paths:
       - 'gcp/terraform/**'
+      - 'do/terraform/**'
       - '.github/workflows/terraform.yml'
   workflow_dispatch:
 
@@ -22,9 +24,17 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off so a break in one provider tree still reports the other.
+      fail-fast: false
+      matrix:
+        tree:
+          - gcp/terraform
+          - do/terraform
+    name: validate (${{ matrix.tree }})
     defaults:
       run:
-        working-directory: gcp/terraform
+        working-directory: ${{ matrix.tree }}
     steps:
       - uses: actions/checkout@v4
 
