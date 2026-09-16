@@ -432,6 +432,51 @@ SSHD
   done
 }
 
+pin_unattended_upgrades() {
+  # DigitalOcean's Debian image ships unattended-upgrades enabled, which is
+  # fine and left alone -- security patching should happen. What is not fine is
+  # that Automatic-Reboot is nowhere on disk: Debian's built-in default is
+  # false, so the behaviour is right today, but it is implicit and a future
+  # image could ship it differently.
+  #
+  # Pin it, because an unattended reboot is not a small event on this host. It
+  # re-runs this bootstrap, and after cutover it restarts the validator at a
+  # moment nobody chose. Reboots stay an operator action.
+  #
+  # 99 prefix so it sorts after 50unattended-upgrades; apt reads apt.conf.d in
+  # lexical order and the last assignment wins. Not narrowing Allowed-Origins
+  # here -- the image includes the main Debian archive alongside security, which
+  # is broader than security-only but is a deliberate call to leave to the
+  # operator, not something to change silently from a boot script.
+  local conf="/etc/apt/apt.conf.d/99zcash-vote-validator.conf"
+  local tmp
+
+  tmp="$(mktemp)"
+  cat <<'APTCONF' > "$tmp"
+// Managed by zcash-vote-validator startup. Edits are overwritten on next boot.
+// Reboots are an operator action: an unattended one re-runs the bootstrap and,
+// once a validator is present, restarts it unannounced.
+Unattended-Upgrade::Automatic-Reboot "false";
+APTCONF
+
+  if [ -f "$conf" ] && cmp -s "$tmp" "$conf"; then
+    rm -f "$tmp"
+    return 0
+  fi
+
+  log "Pinning Unattended-Upgrade::Automatic-Reboot=false"
+  install -m 0644 "$tmp" "$conf"
+  rm -f "$tmp"
+
+  # apt parses its configuration on every invocation, so nothing to reload --
+  # but a malformed fragment breaks every later apt call, so prove it parses.
+  if ! apt-config dump >/dev/null 2>&1; then
+    log "ERROR: apt rejected the config fragment; removing it"
+    rm -f "$conf"
+    return 1
+  fi
+}
+
 configure_sudoers() {
   # join.sh is not optional about this: it writes systemd units with `sudo tee`,
   # installs Caddy with `sudo apt-get`, and calls `sudo systemctl` non
@@ -1947,6 +1992,7 @@ main() {
   ensure_data_disk
   ensure_admin_user
   harden_sshd
+  pin_unattended_upgrades
   configure_sudoers
   write_svote_env_file
   install_upgrade_staging

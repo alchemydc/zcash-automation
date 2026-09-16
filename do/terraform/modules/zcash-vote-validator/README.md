@@ -128,6 +128,24 @@ them. This matters when migrating an existing validator: exclude
 `data-backup-*` from the rsync or you will carry full copies of chain state
 onto the new volume.
 
+### Unattended upgrades: patched, but never self-rebooting
+
+DigitalOcean's Debian image ships `unattended-upgrades` enabled, so security
+patching happens on its own. The module leaves that alone — it should.
+
+What it does pin, in `/etc/apt/apt.conf.d/99zcash-vote-validator.conf`, is
+`Unattended-Upgrade::Automatic-Reboot "false"`. Debian's built-in default is
+already false, but it is *implicit* — set nowhere on disk — and an unattended
+reboot is not a small event here: it re-runs the bootstrap, and once a validator
+is present it restarts it at a moment nobody chose. Reboots stay an operator
+action.
+
+Deliberately **not** pinned: `Allowed-Origins`. The DO image includes the main
+Debian archive (`label=Debian`) alongside `Debian-Security`, which is broader
+than security-only. Narrowing it is defensible, but it is an operator's call
+about patch policy, not something a boot script should change silently. If you
+do want security-only, that is the knob.
+
 ### Smaller deltas
 
 - **Data volume device path** is `/dev/disk/by-id/scsi-0DO_Volume_<name>`, so
