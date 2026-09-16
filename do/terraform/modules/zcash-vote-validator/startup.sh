@@ -101,6 +101,12 @@ install_base_packages() {
   # installing it up front makes that whole block a no-op.
   #
   # For a newer Caddy, trixie-backports has 2.11.x.
+  # rsync is not in the Debian cloud image and is not optional here: migrating a
+  # validator onto or off this host is an rsync of the data volume, and finding
+  # it missing at cutover -- with the daemon already stopped -- is the wrong time
+  # to discover it. It is also what makes a two-pass migration possible, where
+  # the bulk copies while the old host still signs and only a delta lands in the
+  # downtime window.
   apt_get install -y \
     ca-certificates \
     caddy \
@@ -108,6 +114,7 @@ install_base_packages() {
     htop \
     jq \
     lz4 \
+    rsync \
     tmux
 }
 
