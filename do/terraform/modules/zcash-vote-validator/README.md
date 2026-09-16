@@ -212,23 +212,31 @@ Debian 13 is required, not preferred: `install_base_packages` installs Caddy
 from Debian main, which ships it from trixie onward. On Debian 12 the bootstrap
 dies.
 
-## Bringing the host up as a follower first
+## Migrating a validator onto this module
 
-When migrating an existing validator, bring this host up as a **follower** — a
-fully-synced node that is not in the validator set — and move the signing key
-only after the old host has stopped. That keeps the invariant that matters:
+This host was migrated from GCE on 2026-09-16 by a two-pass rsync of the data
+volume. **`join.sh` never ran here** — it is for a *new* validator, begins with
+`rm -rf $SVOTE_HOME`, and auto-registers with Valar's queue
+(`docs/svote-installer-security-analysis.md` §2.14).
 
-> The validator signing key is live on exactly one host at any moment.
+It works because everything svoted needs lives on the volume: the wrapper at
+`$INSTALL_DIR/svoted-wrapper.sh`, the binaries at
+`$SVOTE_HOME/cosmovisor/genesis/bin/svoted`, plus config, keyring and chain data.
+The only thing outside it is `/etc/systemd/system/svoted.service`. Everything
+else the host needs — `/etc/default/svote`, the `svote` CLI,
+`svote-stage-upgrades`, the Caddyfile, both systemd drop-ins — this module writes
+itself.
 
-A CometBFT node always has a `priv_validator_key.json`; a follower's is simply
-not the bonded one, and it signs nothing. The real key never touches this host
-until the old one is stopped and confirmed stopped.
+The full procedure, including the ordering that makes it safe, is in the
+[operator runbook](../../README.md#rebuilding-or-migrating-the-host). The short
+version: copy the volume while the old host still signs, stop it, copy again with
+`--delete`, and only then copy the unit file — with no unit, the new host is
+structurally incapable of signing.
 
-Avoid `svote join` with a throwaway identity for this: `join.sh` auto-registers
-the throwaway operator address with Valar's queue
-(`docs/svote-installer-security-analysis.md` §2.14) and the wrapper will loop
-trying to bond it. Prefer a minimal bring-up — binary, genesis, peers, and a
-sync from Valar's published snapshot.
+An earlier draft of the plan brought this host up as a *follower* first so the
+cutover would be a restart rather than a migration. With no live vote that bought
+nothing, and it is recorded here only because it explains why the module never
+grew a "join as follower" path.
 
 ## Operator CLI
 
