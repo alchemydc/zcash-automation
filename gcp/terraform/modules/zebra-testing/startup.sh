@@ -487,7 +487,12 @@ zebra-height() {
 }
 
 zebra-peers() {
-    _zebra_rpc_call getpeerinfo | jq '{count: length, peers: map({addr, inbound, subver, connection_state, pingtime})}'
+    _zebra_rpc_call getpeerinfo | jq '{count: length, peers: map({addr, inbound, subver, services, pruned: (.services | ascii_downcase | .[-1:] | test("[13579bdf]") | not), connection_state, pingtime})}'
+}
+
+# pruned = NODE_NETWORK (services bit 0) not advertised
+zebra-peers-services() {
+    _zebra_rpc_call getpeerinfo | jq 'map(. + {pruned: (.services | ascii_downcase | .[-1:] | test("[13579bdf]") | not)}) | {count: length, pruned_count: (map(select(.pruned)) | length), by_client: (group_by([.subver, .services]) | map(.[0] + {count: length} | {subver, services, pruned, count}) | sort_by(.pruned | not)), pruned: map(select(.pruned) | {addr, subver, services, inbound})}'
 }
 
 zebra-net() {
@@ -570,7 +575,8 @@ Zebra JSON-RPC helpers (curl + jq against the local zebrad RPC endpoint)
   zebra-chain                     full getblockchaininfo
   zebra-tip                       best block height and hash (getbestblockheightandhash)
   zebra-height                    current block count (getblockcount)
-  zebra-peers                     peer summary (getpeerinfo)
+  zebra-peers                     peer summary incl. services/pruned (getpeerinfo)
+  zebra-peers-services            peers grouped by client+services; lists pruned (no NODE_NETWORK) peers
   zebra-net                       network info (getnetworkinfo)
   zebra-mempool                   mempool summary (getmempoolinfo)
   zebra-mempool-txs [true|false]  mempool contents, verbose by default (getrawmempool)
