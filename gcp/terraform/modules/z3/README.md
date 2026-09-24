@@ -40,7 +40,7 @@ sudo /usr/local/bin/z3-start-full-stack
 ## Zebra RPC Helpers
 
 Shell helpers for Zebra's JSON-RPC endpoint (`zebra-sync`, `zebra-peers`,
-`zebra-block`, the generic `zebra-rpc <method>`, and more) are installed to
+`zebra-peers-services`, `zebra-block`, the generic `zebra-rpc <method>`, and more) are installed to
 `/etc/profile.d/zebra-rpc.sh` and available in any interactive shell (login
 and non-login, via an `/etc/bash.bashrc` hook); run
 `zebra-rpc-help` for the full list. They target the host-published RPC port
