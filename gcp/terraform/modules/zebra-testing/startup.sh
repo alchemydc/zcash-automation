@@ -601,6 +601,24 @@ EOF
     if ! grep -Fq '/etc/profile.d/zebra-rpc.sh' /etc/bash.bashrc; then
         printf '\n# Added by %s startup\n[ -f /etc/profile.d/zebra-rpc.sh ] && . /etc/profile.d/zebra-rpc.sh\n' "${module_role}" >> /etc/bash.bashrc
     fi
+
+    # Functions are invisible to non-interactive callers (watch runs `sh -c`,
+    # cron, `ssh host cmd`), so also expose each zebra-* helper as a command:
+    # a symlink to a dispatcher that sources the helpers and calls the function
+    # named by argv[0]. Interactive shells still hit the function first.
+    local name
+    mkdir -p /usr/local/lib/zebra-rpc
+    cat <<'EOF' > /usr/local/lib/zebra-rpc/dispatch
+#!/bin/bash
+. /etc/profile.d/zebra-rpc.sh
+"$(basename "$0")" "$@"
+EOF
+    chmod 0755 /usr/local/lib/zebra-rpc/dispatch
+
+    find /usr/local/bin -maxdepth 1 -lname /usr/local/lib/zebra-rpc/dispatch -delete
+    for name in $(bash -c '. /etc/profile.d/zebra-rpc.sh; declare -F' | awk '$3 ~ /^zebra-/ {print $3}'); do
+        ln -sf /usr/local/lib/zebra-rpc/dispatch "/usr/local/bin/$name"
+    done
 }
 
 checkout_repo() {
