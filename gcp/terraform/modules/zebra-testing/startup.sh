@@ -230,6 +230,19 @@ EOF
     systemctl restart nftables.service
 }
 
+# Zebra's recommended TCP tuning for block propagation; see
+# https://zebra.zfnd.org/user/troubleshooting.html#linux-tcp-tuning-for-block-propagation
+configure_tcp_tuning() {
+    log "Applying Zebra TCP sysctl tuning"
+    cat <<EOF > /etc/sysctl.d/99-zebra-network.conf
+# Managed by ${module_role} startup script.
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_congestion_control=cubic
+net.core.default_qdisc=fq_codel
+EOF
+    sysctl --system
+}
+
 write_zebra_env_file() {
     log "Writing zebrad environment file"
 
@@ -781,6 +794,7 @@ main() {
     ensure_base_provisioning
     ensure_data_disk
     configure_firewall
+    configure_tcp_tuning
     write_zebra_env_file
     write_zebrad_service
     write_snapshot_units
