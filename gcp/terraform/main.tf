@@ -156,7 +156,7 @@ resource "google_compute_firewall" "zebrad_archivenode" {
 
   allow {
     protocol = "tcp"
-    ports    = [tostring(var.zebra_p2p_port)]
+    ports    = distinct([for p in concat([var.zebra_p2p_port], values(local.zebra_p2p_ports)) : tostring(p)])
   }
 }
 
@@ -170,7 +170,7 @@ resource "google_compute_firewall" "zebra_testing" {
 
   allow {
     protocol = "tcp"
-    ports    = [tostring(var.zebra_p2p_port)]
+    ports    = distinct([for p in concat([var.zebra_p2p_port], values(local.zebra_p2p_ports)) : tostring(p)])
   }
 }
 
